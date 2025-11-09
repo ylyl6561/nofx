@@ -138,6 +138,36 @@ func (d *Database) createTables() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 
+		// API Keys 表（新增）
+		`CREATE TABLE IF NOT EXISTS api_keys (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			key_hash TEXT NOT NULL UNIQUE,
+			key_prefix TEXT NOT NULL,
+			name TEXT DEFAULT 'Default Key',
+			enabled BOOLEAN DEFAULT 1,
+			rate_limit INTEGER DEFAULT 1000,
+			usage_count INTEGER DEFAULT 0,
+			last_used_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+
+		// API 使用记录表（新增）
+		`CREATE TABLE IF NOT EXISTS api_usage_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			api_key_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			endpoint TEXT NOT NULL,
+			method TEXT NOT NULL,
+			status_code INTEGER,
+			response_time_ms INTEGER,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+
 		// 触发器：自动更新 updated_at
 		`CREATE TRIGGER IF NOT EXISTS update_users_updated_at
 			AFTER UPDATE ON users

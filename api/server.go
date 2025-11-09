@@ -68,6 +68,10 @@ func corsMiddleware() gin.HandlerFunc {
 
 // setupRoutes 设置路由
 func (s *Server) setupRoutes() {
+	// 导入handlers
+	apiKeyHandlers := handlers.NewAPIKeyHandlers(s.database)
+	tradingAPIHandlers := handlers.NewTradingAPIHandlers(s.database, s.traderManager)
+
 	// API路由组
 	api := s.router.Group("/api")
 	{
@@ -108,7 +112,34 @@ func (s *Server) setupRoutes() {
 			api.GET("/traders/:id/public-config", s.handleGetPublicTraderConfig)
 		}
 
-		// 需要认证的路由
+		// ========== 新增：API Key 相关路由（需要Web认证） ==========
+		apiKeyRoutes := api.Group("/", s.authMiddleware())
+		{
+			// API Key 管理
+			apiKeyRoutes.GET("/api-keys", apiKeyHandlers.ListAPIKeys)
+			apiKeyRoutes.POST("/api-keys", apiKeyHandlers.CreateAPIKey)
+			apiKeyRoutes.DELETE("/api-keys/:id", apiKeyHandlers.DeleteAPIKey)
+			apiKeyRoutes.POST("/api-keys/:id/revoke", apiKeyHandlers.RevokeAPIKey)
+			apiKeyRoutes.GET("/api-keys/usage", apiKeyHandlers.GetUsageStats)
+		}
+
+		// ========== 新增：RESTful API（需要API Key认证） ==========
+		apiV1 := api.Group("/v1")
+		apiV1.Use(middleware.APIKeyAuth(s.database))
+		{
+			// 交易员管理
+			apiV1.GET("/traders", tradingAPIHandlers.ListTraders)
+			apiV1.GET("/traders/:id", tradingAPIHandlers.GetTraderDetail)
+			apiV1.POST("/traders/:id/start", tradingAPIHandlers.StartTrader)
+			apiV1.POST("/traders/:id/stop", tradingAPIHandlers.StopTrader)
+			apiV1.GET("/traders/:id/performance", tradingAPIHandlers.GetTraderPerformance)
+
+			// 资源查询
+			apiV1.GET("/models", tradingAPIHandlers.GetAvailableModels)
+			apiV1.GET("/exchanges", tradingAPIHandlers.GetAvailableExchanges)
+		}
+
+		// 需要认证的路由（原有的Web路由）
 		protected := api.Group("/", s.authMiddleware())
 		{
 			// 注销（加入黑名单）
