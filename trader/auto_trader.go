@@ -39,6 +39,11 @@ type AutoTraderConfig struct {
 	AsterSigner     string // Aster API钱包地址
 	AsterPrivateKey string // Aster API钱包私钥
 
+	// OKX配置
+	OKXAPIKey     string
+	OKXSecretKey  string
+	OKXPassphrase string
+
 	CoinPoolAPIURL string
 
 	// AI配置
@@ -188,6 +193,9 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		if err != nil {
 			return nil, fmt.Errorf("初始化Aster交易器失败: %w", err)
 		}
+	case "okx":
+		log.Printf("🏦 [%s] 使用OKX交易", config.Name)
+		trader = NewOKXTrader(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase)
 	default:
 		return nil, fmt.Errorf("不支持的交易平台: %s", config.Exchange)
 	}

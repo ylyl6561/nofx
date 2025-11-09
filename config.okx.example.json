@@ -1,0 +1,39 @@
+{
+  "traders": [
+    {
+      "id": "okx_trader_001",
+      "name": "OKX量化交易员",
+      "enabled": true,
+      "ai_model": "deepseek",
+      
+      "exchange": "okx",
+      "okx_api_key": "your_okx_api_key_here",
+      "okx_secret_key": "your_okx_secret_key_here",
+      "okx_passphrase": "your_okx_passphrase_here",
+      
+      "deepseek_key": "your_deepseek_api_key_here",
+      
+      "initial_balance": 1000,
+      "scan_interval_minutes": 60
+    }
+  ],
+  "leverage": {
+    "btc_eth_leverage": 10,
+    "altcoin_leverage": 5
+  },
+  "risk_control": {
+    "max_daily_loss": 5,
+    "max_drawdown": 10,
+    "stop_trading_minutes": 60
+  },
+  "coin_pool": {
+    "api_url": "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listing",
+    "oi_top_url": "https://www.coinglass.com/pro/futures/OpenInterestRank"
+  },
+  "default_coins": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT"
+  ]
+}

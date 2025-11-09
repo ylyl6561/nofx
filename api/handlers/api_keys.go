@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"net/http"
-	"ai-trader/config"
+	"nofx/config"
 
 	"github.com/gin-gonic/gin"
 )

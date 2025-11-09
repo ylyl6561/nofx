@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"net/http"
-	"ai-trader/config"
+	"nofx/config"
 	"strings"
 	"time"
 
