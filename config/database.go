@@ -214,6 +214,7 @@ func (d *Database) createTables() error {
 
 	// 为现有数据库添加新字段（向后兼容）
 	alterQueries := []string{
+		`ALTER TABLE exchanges ADD COLUMN passphrase TEXT DEFAULT ''`,              // OKX API Passphrase
 		`ALTER TABLE exchanges ADD COLUMN hyperliquid_wallet_addr TEXT DEFAULT ''`,
 		`ALTER TABLE exchanges ADD COLUMN aster_user TEXT DEFAULT ''`,
 		`ALTER TABLE exchanges ADD COLUMN aster_signer TEXT DEFAULT ''`,
@@ -254,7 +255,8 @@ func (d *Database) initDefaultData() error {
 		id, name, provider string
 	}{
 		{"deepseek", "DeepSeek", "deepseek"},
-		{"qwen", "Qwen", "qwen"},
+		{"qwen", "Qwen (通义千问)", "qwen"},
+		{"custom", "Custom OpenAI API", "custom"},
 	}
 
 	for _, model := range aiModels {
@@ -271,9 +273,10 @@ func (d *Database) initDefaultData() error {
 	exchanges := []struct {
 		id, name, typ string
 	}{
-		{"binance", "Binance Futures", "binance"},
-		{"hyperliquid", "Hyperliquid", "hyperliquid"},
-		{"aster", "Aster DEX", "aster"},
+		{"binance", "Binance Futures", "cex"},
+		{"okx", "OKX", "cex"},
+		{"hyperliquid", "Hyperliquid", "dex"},
+		{"aster", "Aster DEX", "dex"},
 	}
 
 	for _, exchange := range exchanges {
@@ -343,6 +346,7 @@ func (d *Database) migrateExchangesTable() error {
 			enabled BOOLEAN DEFAULT 0,
 			api_key TEXT DEFAULT '',
 			secret_key TEXT DEFAULT '',
+			passphrase TEXT DEFAULT '',
 			testnet BOOLEAN DEFAULT 0,
 			hyperliquid_wallet_addr TEXT DEFAULT '',
 			aster_user TEXT DEFAULT '',
@@ -358,10 +362,18 @@ func (d *Database) migrateExchangesTable() error {
 		return fmt.Errorf("创建新exchanges表失败: %w", err)
 	}
 
-	// 复制数据到新表
+	// 复制数据到新表（明确指定列名，兼容有无 passphrase 的情况）
 	_, err = d.db.Exec(`
-		INSERT INTO exchanges_new 
-		SELECT * FROM exchanges
+		INSERT INTO exchanges_new (id, user_id, name, type, enabled, api_key, secret_key, passphrase, testnet, 
+		                            hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
+		SELECT id, user_id, name, type, enabled, api_key, secret_key, 
+		       COALESCE(passphrase, '') as passphrase, testnet,
+		       COALESCE(hyperliquid_wallet_addr, '') as hyperliquid_wallet_addr,
+		       COALESCE(aster_user, '') as aster_user,
+		       COALESCE(aster_signer, '') as aster_signer,
+		       COALESCE(aster_private_key, '') as aster_private_key,
+		       created_at, updated_at
+		FROM exchanges
 	`)
 	if err != nil {
 		return fmt.Errorf("复制数据失败: %w", err)
@@ -431,6 +443,8 @@ type ExchangeConfig struct {
 	APIKey    string `json:"apiKey"`
 	SecretKey string `json:"secretKey"`
 	Testnet   bool   `json:"testnet"`
+	// OKX 特定字段
+	Passphrase string `json:"passphrase"` // OKX API Passphrase
 	// Hyperliquid 特定字段
 	HyperliquidWalletAddr string `json:"hyperliquidWalletAddr"`
 	// Aster 特定字段
@@ -703,6 +717,7 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 	rows, err := d.db.Query(`
 		SELECT id, user_id, name, type, enabled, api_key, secret_key, testnet, 
+		       COALESCE(passphrase, '') as passphrase,
 		       COALESCE(hyperliquid_wallet_addr, '') as hyperliquid_wallet_addr,
 		       COALESCE(aster_user, '') as aster_user,
 		       COALESCE(aster_signer, '') as aster_signer,
@@ -722,6 +737,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		err := rows.Scan(
 			&exchange.ID, &exchange.UserID, &exchange.Name, &exchange.Type,
 			&exchange.Enabled, &exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
+			&exchange.Passphrase,
 			&exchange.HyperliquidWalletAddr, &exchange.AsterUser,
 			&exchange.AsterSigner, &exchange.AsterPrivateKey,
 			&exchange.CreatedAt, &exchange.UpdatedAt,
@@ -736,15 +752,15 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 }
 
 // UpdateExchange 更新交易所配置，如果不存在则创建用户特定配置
-func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
+func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secretKey, passphrase string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
 	log.Printf("🔧 UpdateExchange: userID=%s, id=%s, enabled=%v", userID, id, enabled)
 
 	// 首先尝试更新现有的用户配置
 	result, err := d.db.Exec(`
-		UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, testnet = ?, 
+		UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, passphrase = ?, testnet = ?, 
 		       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = datetime('now')
 		WHERE id = ? AND user_id = ?
-	`, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, id, userID)
+	`, enabled, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, id, userID)
 	if err != nil {
 		log.Printf("❌ UpdateExchange: 更新失败: %v", err)
 		return err
@@ -783,10 +799,10 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 
 		// 创建用户特定的配置，使用原始的交易所ID
 		_, err = d.db.Exec(`
-			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, 
+			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, passphrase, testnet, 
 			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-		`, id, userID, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		`, id, userID, name, typ, enabled, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
 
 		if err != nil {
 			log.Printf("❌ UpdateExchange: 创建记录失败: %v", err)
@@ -1038,6 +1054,29 @@ func (d *Database) GetCustomCoins() []string {
 		}
 	}
 	return symbols
+}
+
+// IsUsingTestnet 检查是否使用测试网（从第一个启用的交易所读取）
+func (d *Database) IsUsingTestnet() bool {
+	var testnet bool
+	err := d.db.QueryRow(`
+		SELECT testnet FROM exchanges 
+		WHERE enabled = 1 
+		LIMIT 1
+	`).Scan(&testnet)
+	
+	if err != nil {
+		log.Printf("⚠️  检查测试网配置失败: %v，默认使用实盘", err)
+		return false
+	}
+	
+	if testnet {
+		log.Printf("🧪 系统使用测试网模式")
+	} else {
+		log.Printf("💰 系统使用实盘模式")
+	}
+	
+	return testnet
 }
 
 // Close 关闭数据库连接

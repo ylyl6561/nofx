@@ -22,6 +22,7 @@ type OKXTrader struct {
 	passphrase string
 	baseURL    string
 	client     *http.Client
+	isTestnet  bool // 是否使用测试网
 
 	// 余额缓存
 	cachedBalance     map[string]interface{}
@@ -38,12 +39,21 @@ type OKXTrader struct {
 }
 
 // NewOKXTrader 创建OKX交易器
-func NewOKXTrader(apiKey, secretKey, passphrase string) *OKXTrader {
+func NewOKXTrader(apiKey, secretKey, passphrase string, testnet bool) *OKXTrader {
+	baseURL := "https://www.okx.com"
+	if testnet {
+		// OKX 模拟盘使用相同的域名，但需要使用模拟盘的 API Key
+		// 模拟盘和实盘通过 API Key 区分，URL 相同
+		baseURL = "https://www.okx.com"
+		log.Printf("🧪 OKX 交易器使用模拟盘模式")
+	}
+	
 	return &OKXTrader{
 		apiKey:        apiKey,
 		secretKey:     secretKey,
 		passphrase:    passphrase,
-		baseURL:       "https://www.okx.com",
+		baseURL:       baseURL,
+		isTestnet:     testnet,
 		client:        &http.Client{Timeout: 30 * time.Second},
 		cacheDuration: 15 * time.Second,
 	}
@@ -84,6 +94,12 @@ func (t *OKXTrader) request(method, endpoint, body string) ([]byte, error) {
 	req.Header.Set("OK-ACCESS-TIMESTAMP", timestamp)
 	req.Header.Set("OK-ACCESS-PASSPHRASE", t.passphrase)
 	req.Header.Set("Content-Type", "application/json")
+	
+	// 调试日志
+	log.Printf("🔍 OKX API 请求: %s %s", method, endpoint)
+	log.Printf("   API Key: %s... (长度: %d)", t.apiKey[:10], len(t.apiKey))
+	log.Printf("   Passphrase: %s (长度: %d)", t.passphrase, len(t.passphrase))
+	log.Printf("   Testnet: %v", t.isTestnet)
 
 	resp, err := t.client.Do(req)
 	if err != nil {

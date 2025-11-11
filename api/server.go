@@ -83,6 +83,13 @@ func (s *Server) setupRoutes() {
 		// 管理员登录（管理员模式下使用，公共）
 		api.POST("/admin-login", s.handleAdminLogin)
 
+		// 系统配置（无需认证，用于前端判断是否管理员模式/注册是否开启）
+		api.GET("/config", s.handleGetSystemConfig)
+
+		// 系统支持的模型和交易所（无需认证，管理员模式和非管理员模式都需要）
+		api.GET("/supported-models", s.handleGetSupportedModels)
+		api.GET("/supported-exchanges", s.handleGetSupportedExchanges)
+
 		// 非管理员模式下的公开认证路由
 		if !auth.IsAdminMode() {
 			// 认证相关路由（无需认证）
@@ -91,16 +98,7 @@ func (s *Server) setupRoutes() {
 			api.POST("/verify-otp", s.handleVerifyOTP)
 			api.POST("/complete-registration", s.handleCompleteRegistration)
 
-			// 系统支持的模型和交易所（无需认证）
-			api.GET("/supported-models", s.handleGetSupportedModels)
-			api.GET("/supported-exchanges", s.handleGetSupportedExchanges)
-		}
-
-		// 系统配置（无需认证，用于前端判断是否管理员模式/注册是否开启）
-		api.GET("/config", s.handleGetSystemConfig)
-
-		// 系统提示词模板管理（仅在非管理员模式下公开）
-		if !auth.IsAdminMode() {
+			// 系统提示词模板管理（仅在非管理员模式下公开）
 			// 系统提示词模板管理（无需认证）
 			api.GET("/prompt-templates", s.handleGetPromptTemplates)
 			api.GET("/prompt-templates/:name", s.handleGetPromptTemplate)
@@ -441,6 +439,7 @@ type UpdateExchangeConfigRequest struct {
 		Enabled               bool   `json:"enabled"`
 		APIKey                string `json:"api_key"`
 		SecretKey             string `json:"secret_key"`
+		Passphrase            string `json:"passphrase"` // OKX API Passphrase
 		Testnet               bool   `json:"testnet"`
 		HyperliquidWalletAddr string `json:"hyperliquid_wallet_addr"`
 		AsterUser             string `json:"aster_user"`
@@ -552,7 +551,17 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 
 		switch req.ExchangeID {
 		case "binance":
-			tempTrader = trader.NewFuturesTrader(exchangeCfg.APIKey, exchangeCfg.SecretKey)
+			tempTrader = trader.NewFuturesTrader(exchangeCfg.APIKey, exchangeCfg.SecretKey, exchangeCfg.Testnet)
+		case "okx":
+			// OKX 需要 passphrase，从 SecretKey 字段获取（前端保存时需要特殊处理）
+			// 注意：这里假设 exchangeCfg 已经包含了 passphrase 信息
+			// 实际上需要在 ExchangeConfig 结构体中添加 Passphrase 字段
+			tempTrader = trader.NewOKXTrader(
+				exchangeCfg.APIKey,
+				exchangeCfg.SecretKey,
+				exchangeCfg.Passphrase,
+				exchangeCfg.Testnet,
+			)
 		case "hyperliquid":
 			tempTrader, createErr = trader.NewHyperliquidTrader(
 				exchangeCfg.APIKey, // private key
@@ -786,9 +795,21 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 		return
 	}
 
+	// 先移除旧的 trader 实例（如果存在），然后重新加载配置
+	// 这样可以确保使用最新的配置（包括交易所 API Key）
+	s.traderManager.RemoveTrader(traderID)
+	
+	// 重新加载用户的交易员配置
+	err = s.traderManager.LoadUserTraders(s.database, userID)
+	if err != nil {
+		log.Printf("⚠️ 重新加载用户交易员配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新加载配置失败"})
+		return
+	}
+
 	trader, err := s.traderManager.GetTrader(traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在或配置不完整"})
 		return
 	}
 
@@ -913,7 +934,7 @@ func (s *Server) handleSyncBalance(c *gin.Context) {
 
 	switch traderConfig.ExchangeID {
 	case "binance":
-		tempTrader = trader.NewFuturesTrader(exchangeCfg.APIKey, exchangeCfg.SecretKey)
+		tempTrader = trader.NewFuturesTrader(exchangeCfg.APIKey, exchangeCfg.SecretKey, exchangeCfg.Testnet)
 	case "hyperliquid":
 		tempTrader, createErr = trader.NewHyperliquidTrader(
 			exchangeCfg.APIKey,
@@ -1065,7 +1086,7 @@ func (s *Server) handleUpdateExchangeConfigs(c *gin.Context) {
 
 	// 更新每个交易所的配置
 	for exchangeID, exchangeData := range req.Exchanges {
-		err := s.database.UpdateExchange(userID, exchangeID, exchangeData.Enabled, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Testnet, exchangeData.HyperliquidWalletAddr, exchangeData.AsterUser, exchangeData.AsterSigner, exchangeData.AsterPrivateKey)
+		err := s.database.UpdateExchange(userID, exchangeID, exchangeData.Enabled, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Passphrase, exchangeData.Testnet, exchangeData.HyperliquidWalletAddr, exchangeData.AsterUser, exchangeData.AsterSigner, exchangeData.AsterPrivateKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新交易所 %s 失败: %v", exchangeID, err)})
 			return

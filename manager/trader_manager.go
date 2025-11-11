@@ -245,6 +245,12 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	if exchangeCfg.ID == "binance" {
 		traderConfig.BinanceAPIKey = exchangeCfg.APIKey
 		traderConfig.BinanceSecretKey = exchangeCfg.SecretKey
+		traderConfig.Testnet = exchangeCfg.Testnet
+	} else if exchangeCfg.ID == "okx" {
+		traderConfig.OKXAPIKey = exchangeCfg.APIKey
+		traderConfig.OKXSecretKey = exchangeCfg.SecretKey
+		traderConfig.OKXPassphrase = exchangeCfg.Passphrase
+		traderConfig.Testnet = exchangeCfg.Testnet
 	} else if exchangeCfg.ID == "hyperliquid" {
 		traderConfig.HyperliquidPrivateKey = exchangeCfg.APIKey // hyperliquid用APIKey存储private key
 		traderConfig.HyperliquidWalletAddr = exchangeCfg.HyperliquidWalletAddr
@@ -351,6 +357,12 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	if exchangeCfg.ID == "binance" {
 		traderConfig.BinanceAPIKey = exchangeCfg.APIKey
 		traderConfig.BinanceSecretKey = exchangeCfg.SecretKey
+		traderConfig.Testnet = exchangeCfg.Testnet
+	} else if exchangeCfg.ID == "okx" {
+		traderConfig.OKXAPIKey = exchangeCfg.APIKey
+		traderConfig.OKXSecretKey = exchangeCfg.SecretKey
+		traderConfig.OKXPassphrase = exchangeCfg.Passphrase
+		traderConfig.Testnet = exchangeCfg.Testnet
 	} else if exchangeCfg.ID == "hyperliquid" {
 		traderConfig.HyperliquidPrivateKey = exchangeCfg.APIKey // hyperliquid用APIKey存储private key
 		traderConfig.HyperliquidWalletAddr = exchangeCfg.HyperliquidWalletAddr
@@ -708,6 +720,19 @@ func containsUserPrefix(traderID string) bool {
 	return false
 }
 
+// RemoveTrader 从内存中移除指定的交易员
+func (tm *TraderManager) RemoveTrader(traderID string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	if trader, exists := tm.traders[traderID]; exists {
+		// 如果 trader 正在运行，先停止它
+		trader.Stop()
+		delete(tm.traders, traderID)
+		log.Printf("🗑️  已从内存中移除交易员: %s", traderID)
+	}
+}
+
 // LoadUserTraders 为特定用户加载交易员到内存
 func (tm *TraderManager) LoadUserTraders(database *config.Database, userID string) error {
 	tm.mu.Lock()
@@ -896,6 +921,12 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 	if exchangeCfg.ID == "binance" {
 		traderConfig.BinanceAPIKey = exchangeCfg.APIKey
 		traderConfig.BinanceSecretKey = exchangeCfg.SecretKey
+		traderConfig.Testnet = exchangeCfg.Testnet
+	} else if exchangeCfg.ID == "okx" {
+		traderConfig.OKXAPIKey = exchangeCfg.APIKey
+		traderConfig.OKXSecretKey = exchangeCfg.SecretKey
+		traderConfig.OKXPassphrase = exchangeCfg.Passphrase
+		traderConfig.Testnet = exchangeCfg.Testnet
 	} else if exchangeCfg.ID == "hyperliquid" {
 		traderConfig.HyperliquidPrivateKey = exchangeCfg.APIKey // hyperliquid用APIKey存储private key
 		traderConfig.HyperliquidWalletAddr = exchangeCfg.HyperliquidWalletAddr

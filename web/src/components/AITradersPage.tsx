@@ -416,10 +416,21 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     if (!confirm(t('confirmDeleteExchange', language))) return
 
     try {
+      // 将该交易所设置为禁用并清空敏感信息
       const updatedExchanges =
         allExchanges?.map((e) =>
           e.id === exchangeId
-            ? { ...e, apiKey: '', secretKey: '', enabled: false }
+            ? { 
+                ...e, 
+                apiKey: '', 
+                secretKey: '', 
+                passphrase: '',
+                enabled: false,
+                hyperliquidWalletAddr: '',
+                asterUser: '',
+                asterSigner: '',
+                asterPrivateKey: '',
+              }
             : e
         ) || []
 
@@ -431,14 +442,23 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               enabled: exchange.enabled,
               api_key: exchange.apiKey || '',
               secret_key: exchange.secretKey || '',
+              passphrase: exchange.passphrase || '',
               testnet: exchange.testnet || false,
+              hyperliquid_wallet_addr: exchange.hyperliquidWalletAddr || '',
+              aster_user: exchange.asterUser || '',
+              aster_signer: exchange.asterSigner || '',
+              aster_private_key: exchange.asterPrivateKey || '',
             },
           ])
         ),
       }
 
       await api.updateExchangeConfigs(request)
-      setAllExchanges(updatedExchanges)
+      
+      // 重新获取配置以确保同步
+      const refreshedExchanges = await api.getExchangeConfigs()
+      setAllExchanges(refreshedExchanges)
+      
       setShowExchangeModal(false)
       setEditingExchange(null)
     } catch (error) {
@@ -455,7 +475,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     hyperliquidWalletAddr?: string,
     asterUser?: string,
     asterSigner?: string,
-    asterPrivateKey?: string
+    asterPrivateKey?: string,
+    passphrase?: string
   ) => {
     try {
       // 找到要配置的交易所（从supportedExchanges中）
@@ -480,6 +501,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                   ...e,
                   apiKey,
                   secretKey,
+                  passphrase,
                   testnet,
                   hyperliquidWalletAddr,
                   asterUser,
@@ -495,6 +517,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           ...exchangeToUpdate,
           apiKey,
           secretKey,
+          passphrase,
           testnet,
           hyperliquidWalletAddr,
           asterUser,
@@ -513,6 +536,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               enabled: exchange.enabled,
               api_key: exchange.apiKey || '',
               secret_key: exchange.secretKey || '',
+              passphrase: exchange.passphrase || '',
               testnet: exchange.testnet || false,
               hyperliquid_wallet_addr: exchange.hyperliquidWalletAddr || '',
               aster_user: exchange.asterUser || '',
@@ -1088,6 +1112,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       {showExchangeModal && (
         <ExchangeConfigModal
           allExchanges={supportedExchanges}
+          userExchanges={allExchanges}
           editingExchangeId={editingExchange}
           onSave={handleSaveExchangeConfig}
           onDelete={handleDeleteExchangeConfig}
@@ -1556,6 +1581,7 @@ function ModelConfigModal({
 // Exchange Configuration Modal Component
 function ExchangeConfigModal({
   allExchanges,
+  userExchanges,
   editingExchangeId,
   onSave,
   onDelete,
@@ -1563,6 +1589,7 @@ function ExchangeConfigModal({
   language,
 }: {
   allExchanges: Exchange[]
+  userExchanges: Exchange[]
   editingExchangeId: string | null
   onSave: (
     exchangeId: string,
@@ -1572,7 +1599,8 @@ function ExchangeConfigModal({
     hyperliquidWalletAddr?: string,
     asterUser?: string,
     asterSigner?: string,
-    asterPrivateKey?: string
+    asterPrivateKey?: string,
+    passphrase?: string
   ) => Promise<void>
   onDelete: (exchangeId: string) => void
   onClose: () => void
@@ -1601,25 +1629,30 @@ function ExchangeConfigModal({
   const [asterSigner, setAsterSigner] = useState('')
   const [asterPrivateKey, setAsterPrivateKey] = useState('')
 
-  // 获取当前编辑的交易所信息
+  // 获取当前选择的交易所信息（用于显示名称等）
   const selectedExchange = allExchanges?.find(
     (e) => e.id === selectedExchangeId
+  )
+  
+  // 获取用户已配置的交易所数据（用于编辑时回填）
+  const userExchange = userExchanges?.find(
+    (e) => e.id === editingExchangeId
   )
 
   // 如果是编辑现有交易所，初始化表单数据
   useEffect(() => {
-    if (editingExchangeId && selectedExchange) {
-      setApiKey(selectedExchange.apiKey || '')
-      setSecretKey(selectedExchange.secretKey || '')
-      setPassphrase('') // Don't load existing passphrase for security
-      setTestnet(selectedExchange.testnet || false)
+    if (editingExchangeId && userExchange) {
+      setApiKey(userExchange.apiKey || '')
+      setSecretKey(userExchange.secretKey || '')
+      setPassphrase(userExchange.passphrase || '') // 回填 passphrase
+      setTestnet(userExchange.testnet || false)
 
       // Aster 字段
-      setAsterUser(selectedExchange.asterUser || '')
-      setAsterSigner(selectedExchange.asterSigner || '')
+      setAsterUser(userExchange.asterUser || '')
+      setAsterSigner(userExchange.asterSigner || '')
       setAsterPrivateKey('') // Don't load existing private key for security
     }
-  }, [editingExchangeId, selectedExchange])
+  }, [editingExchangeId, userExchange])
 
   // 加载服务器IP（当选择binance时）
   useEffect(() => {
@@ -1672,7 +1705,17 @@ function ExchangeConfigModal({
       )
     } else if (selectedExchange?.id === 'okx') {
       if (!apiKey.trim() || !secretKey.trim() || !passphrase.trim()) return
-      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet)
+      await onSave(
+        selectedExchangeId,
+        apiKey.trim(),
+        secretKey.trim(),
+        testnet,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        passphrase.trim()
+      )
     } else {
       // 默认情况（其他CEX交易所）
       if (!apiKey.trim() || !secretKey.trim()) return
@@ -1904,28 +1947,6 @@ function ExchangeConfigModal({
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
                         placeholder={t('enterAPIKey', language)}
-                        className="w-full px-3 py-2 rounded"
-                        style={{
-                          background: '#0B0E11',
-                          border: '1px solid #2B3139',
-                          color: '#EAECEF',
-                        }}
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        className="block text-sm font-semibold mb-2"
-                        style={{ color: '#EAECEF' }}
-                      >
-                        {t('secretKey', language)}
-                      </label>
-                      <input
-                        type="password"
-                        value={secretKey}
-                        onChange={(e) => setSecretKey(e.target.value)}
-                        placeholder={t('enterSecretKey', language)}
                         className="w-full px-3 py-2 rounded"
                         style={{
                           background: '#0B0E11',

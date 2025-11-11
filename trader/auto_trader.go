@@ -44,6 +44,9 @@ type AutoTraderConfig struct {
 	OKXSecretKey  string
 	OKXPassphrase string
 
+	// 通用测试网配置
+	Testnet bool // 是否使用测试网/模拟盘
+
 	CoinPoolAPIURL string
 
 	// AI配置
@@ -180,7 +183,7 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 	switch config.Exchange {
 	case "binance":
 		log.Printf("🏦 [%s] 使用币安合约交易", config.Name)
-		trader = NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey)
+		trader = NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey, config.Testnet)
 	case "hyperliquid":
 		log.Printf("🏦 [%s] 使用Hyperliquid交易", config.Name)
 		trader, err = NewHyperliquidTrader(config.HyperliquidPrivateKey, config.HyperliquidWalletAddr, config.HyperliquidTestnet)
@@ -195,7 +198,7 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		}
 	case "okx":
 		log.Printf("🏦 [%s] 使用OKX交易", config.Name)
-		trader = NewOKXTrader(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase)
+		trader = NewOKXTrader(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase, config.Testnet)
 	default:
 		return nil, fmt.Errorf("不支持的交易平台: %s", config.Exchange)
 	}

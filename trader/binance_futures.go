@@ -31,8 +31,20 @@ type FuturesTrader struct {
 }
 
 // NewFuturesTrader 创建合约交易器
-func NewFuturesTrader(apiKey, secretKey string) *FuturesTrader {
+func NewFuturesTrader(apiKey, secretKey string, testnet bool) *FuturesTrader {
+	// 调试日志
+	log.Printf("🔍 NewFuturesTrader 参数: testnet=%v", testnet)
+	
 	client := futures.NewClient(apiKey, secretKey)
+	
+	// 如果是测试网，直接设置 BaseURL
+	if testnet {
+		client.BaseURL = "https://testnet.binancefuture.com"
+		log.Printf("🧪 Binance 交易器使用测试网模式: %s", client.BaseURL)
+	} else {
+		log.Printf("💰 Binance 交易器使用实盘模式: %s", client.BaseURL)
+	}
+	
 	// 同步时间，避免 Timestamp ahead 错误
 	syncBinanceServerTime(client)
 	trader := &FuturesTrader{

@@ -17,15 +17,22 @@ type CombinedStreamsClient struct {
 	subscribers map[string]chan []byte
 	reconnect   bool
 	done        chan struct{}
-	batchSize   int // 每批订阅的流数量
+	batchSize   int    // 每批订阅的流数量
+	wsURL       string // WebSocket URL
 }
 
-func NewCombinedStreamsClient(batchSize int) *CombinedStreamsClient {
+func NewCombinedStreamsClient(batchSize int, testnet bool) *CombinedStreamsClient {
+	wsURL := "wss://fstream.binance.com/stream"
+	if testnet {
+		wsURL = "wss://stream.binancefuture.com/stream"
+	}
+	
 	return &CombinedStreamsClient{
 		subscribers: make(map[string]chan []byte),
 		reconnect:   true,
 		done:        make(chan struct{}),
 		batchSize:   batchSize,
+		wsURL:       wsURL,
 	}
 }
 
@@ -35,7 +42,7 @@ func (c *CombinedStreamsClient) Connect() error {
 	}
 
 	// 组合流使用不同的端点
-	conn, _, err := dialer.Dial("wss://fstream.binance.com/stream", nil)
+	conn, _, err := dialer.Dial(c.wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("组合流WebSocket连接失败: %v", err)
 	}
