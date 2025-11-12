@@ -1,0 +1,5 @@
+{
+  "build_command": "cd web && npm install && npm run build && cd .. && go build -o app main.go",
+  "start_command": "./app",
+  "install_command": "go mod download"
+}
