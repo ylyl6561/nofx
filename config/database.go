@@ -70,12 +70,25 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, model := range aiModels {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled) 
-			VALUES (?, 'default', ?, ?, 0)
-		`, model.id, model.name, model.provider)
-		if err != nil {
-			return fmt.Errorf("初始化AI模型失败: %w", err)
+		if d.isPostgreSQL() {
+			// PostgreSQL 使用 ON CONFLICT
+			_, err := d.db.Exec(`
+				INSERT INTO ai_models (id, user_id, name, provider, enabled) 
+				VALUES ($1, 'default', $2, $3, false)
+				ON CONFLICT (id, user_id) DO NOTHING
+			`, model.id, model.name, model.provider)
+			if err != nil {
+				return fmt.Errorf("初始化AI模型失败: %w", err)
+			}
+		} else {
+			// SQLite 使用 INSERT OR IGNORE
+			_, err := d.db.Exec(`
+				INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled) 
+				VALUES (?, 'default', ?, ?, 0)
+			`, model.id, model.name, model.provider)
+			if err != nil {
+				return fmt.Errorf("初始化AI模型失败: %w", err)
+			}
 		}
 	}
 
@@ -90,12 +103,25 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, exchange := range exchanges {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled) 
-			VALUES (?, 'default', ?, ?, 0)
-		`, exchange.id, exchange.name, exchange.typ)
-		if err != nil {
-			return fmt.Errorf("初始化交易所失败: %w", err)
+		if d.isPostgreSQL() {
+			// PostgreSQL 使用 ON CONFLICT
+			_, err := d.db.Exec(`
+				INSERT INTO exchanges (id, user_id, name, type, enabled) 
+				VALUES ($1, 'default', $2, $3, false)
+				ON CONFLICT (id, user_id) DO NOTHING
+			`, exchange.id, exchange.name, exchange.typ)
+			if err != nil {
+				return fmt.Errorf("初始化交易所失败: %w", err)
+			}
+		} else {
+			// SQLite 使用 INSERT OR IGNORE
+			_, err := d.db.Exec(`
+				INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled) 
+				VALUES (?, 'default', ?, ?, 0)
+			`, exchange.id, exchange.name, exchange.typ)
+			if err != nil {
+				return fmt.Errorf("初始化交易所失败: %w", err)
+			}
 		}
 	}
 
@@ -115,12 +141,25 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for key, value := range systemConfigs {
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO system_config (key, value) 
-			VALUES (?, ?)
-		`, key, value)
-		if err != nil {
-			return fmt.Errorf("初始化系统配置失败: %w", err)
+		if d.isPostgreSQL() {
+			// PostgreSQL 使用 ON CONFLICT
+			_, err := d.db.Exec(`
+				INSERT INTO system_config (key, value) 
+				VALUES ($1, $2)
+				ON CONFLICT (key) DO NOTHING
+			`, key, value)
+			if err != nil {
+				return fmt.Errorf("初始化系统配置失败 [%s]: %w", key, err)
+			}
+		} else {
+			// SQLite 使用 INSERT OR IGNORE
+			_, err := d.db.Exec(`
+				INSERT OR IGNORE INTO system_config (key, value) 
+				VALUES (?, ?)
+			`, key, value)
+			if err != nil {
+				return fmt.Errorf("初始化系统配置失败 [%s]: %w", key, err)
+			}
 		}
 	}
 
@@ -628,20 +667,42 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 
 // CreateAIModel 创建AI模型配置
 func (d *Database) CreateAIModel(userID, id, name, provider string, enabled bool, apiKey, customAPIURL string) error {
-	_, err := d.db.Exec(`
-		INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url) 
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, id, userID, name, provider, enabled, apiKey, customAPIURL)
-	return err
+	if d.isPostgreSQL() {
+		// PostgreSQL 使用 ON CONFLICT
+		_, err := d.db.Exec(`
+			INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url) 
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (id, user_id) DO NOTHING
+		`, id, userID, name, provider, enabled, apiKey, customAPIURL)
+		return err
+	} else {
+		// SQLite 使用 INSERT OR IGNORE
+		_, err := d.db.Exec(`
+			INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url) 
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, id, userID, name, provider, enabled, apiKey, customAPIURL)
+		return err
+	}
 }
 
 // CreateExchange 创建交易所配置
 func (d *Database) CreateExchange(userID, id, name, typ string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
-	_, err := d.db.Exec(`
-		INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, userID, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
-	return err
+	if d.isPostgreSQL() {
+		// PostgreSQL 使用 ON CONFLICT
+		_, err := d.db.Exec(`
+			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			ON CONFLICT (id, user_id) DO NOTHING
+		`, id, userID, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+		return err
+	} else {
+		// SQLite 使用 INSERT OR IGNORE
+		_, err := d.db.Exec(`
+			INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, id, userID, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+		return err
+	}
 }
 
 // CreateTrader 创建交易员
@@ -791,25 +852,54 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 // GetSystemConfig 获取系统配置
 func (d *Database) GetSystemConfig(key string) (string, error) {
 	var value string
-	err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = ?`, key).Scan(&value)
-	return value, err
+	if d.isPostgreSQL() {
+		err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = $1`, key).Scan(&value)
+		return value, err
+	} else {
+		err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = ?`, key).Scan(&value)
+		return value, err
+	}
 }
 
 // SetSystemConfig 设置系统配置
 func (d *Database) SetSystemConfig(key, value string) error {
-	_, err := d.db.Exec(`
-		INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)
-	`, key, value)
-	return err
+	if d.isPostgreSQL() {
+		// PostgreSQL 使用 ON CONFLICT DO UPDATE
+		_, err := d.db.Exec(`
+			INSERT INTO system_config (key, value) VALUES ($1, $2)
+			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+		`, key, value)
+		return err
+	} else {
+		// SQLite 使用 INSERT OR REPLACE
+		_, err := d.db.Exec(`
+			INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)
+		`, key, value)
+		return err
+	}
 }
 
 // CreateUserSignalSource 创建用户信号源配置
 func (d *Database) CreateUserSignalSource(userID, coinPoolURL, oiTopURL string) error {
-	_, err := d.db.Exec(`
-		INSERT OR REPLACE INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-	`, userID, coinPoolURL, oiTopURL)
-	return err
+	if d.isPostgreSQL() {
+		// PostgreSQL 使用 ON CONFLICT DO UPDATE
+		_, err := d.db.Exec(`
+			INSERT INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
+			VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+			ON CONFLICT (user_id) DO UPDATE SET 
+				coin_pool_url = EXCLUDED.coin_pool_url,
+				oi_top_url = EXCLUDED.oi_top_url,
+				updated_at = CURRENT_TIMESTAMP
+		`, userID, coinPoolURL, oiTopURL)
+		return err
+	} else {
+		// SQLite 使用 INSERT OR REPLACE
+		_, err := d.db.Exec(`
+			INSERT OR REPLACE INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		`, userID, coinPoolURL, oiTopURL)
+		return err
+	}
 }
 
 // GetUserSignalSource 获取用户信号源配置
@@ -934,7 +1024,14 @@ func (d *Database) LoadBetaCodesFromFile(filePath string) error {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO beta_codes (code) VALUES (?)`)
+	var stmt *sql.Stmt
+	if d.isPostgreSQL() {
+		// PostgreSQL 使用 ON CONFLICT
+		stmt, err = tx.Prepare(`INSERT INTO beta_codes (code) VALUES ($1) ON CONFLICT (code) DO NOTHING`)
+	} else {
+		// SQLite 使用 INSERT OR IGNORE
+		stmt, err = tx.Prepare(`INSERT OR IGNORE INTO beta_codes (code) VALUES (?)`)
+	}
 	if err != nil {
 		return fmt.Errorf("准备语句失败: %w", err)
 	}
