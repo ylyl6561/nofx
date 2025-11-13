@@ -27,6 +27,37 @@ func (d *Database) isPostgreSQL() bool {
 	return os.Getenv("DATABASE_URL") != ""
 }
 
+// convertQuery 将 SQLite 查询转换为 PostgreSQL 兼容的查询
+func (d *Database) convertQuery(query string) string {
+	if !d.isPostgreSQL() {
+		return query
+	}
+	
+	// 将 ? 占位符转换为 $1, $2, $3...
+	result := ""
+	paramCount := 1
+	for _, char := range query {
+		if char == '?' {
+			result += fmt.Sprintf("$%d", paramCount)
+			paramCount++
+		} else {
+			result += string(char)
+		}
+	}
+	
+	// 将 SQLite 的布尔值转换为 PostgreSQL 的布尔值
+	result = strings.ReplaceAll(result, "COALESCE(use_coin_pool, 0)", "COALESCE(use_coin_pool, false)")
+	result = strings.ReplaceAll(result, "COALESCE(use_oi_top, 0)", "COALESCE(use_oi_top, false)")
+	result = strings.ReplaceAll(result, "COALESCE(override_base_prompt, 0)", "COALESCE(override_base_prompt, false)")
+	result = strings.ReplaceAll(result, "COALESCE(is_cross_margin, 1)", "COALESCE(is_cross_margin, true)")
+	result = strings.ReplaceAll(result, "COALESCE(otp_verified, 0)", "COALESCE(otp_verified, false)")
+	result = strings.ReplaceAll(result, "COALESCE(enabled, 0)", "COALESCE(enabled, false)")
+	result = strings.ReplaceAll(result, "COALESCE(testnet, 0)", "COALESCE(testnet, false)")
+	result = strings.ReplaceAll(result, "COALESCE(is_running, 0)", "COALESCE(is_running, false)")
+	
+	return result
+}
+
 // NewDatabase 创建配置数据库
 func NewDatabase(dbPath string) (*Database, error) {
 	var db *sql.DB
@@ -354,10 +385,10 @@ func GenerateOTPSecret() (string, error) {
 
 // CreateUser 创建用户
 func (d *Database) CreateUser(user *User) error {
-	_, err := d.db.Exec(`
+	query := `
 		INSERT INTO users (id, email, password_hash, otp_secret, otp_verified)
-		VALUES (?, ?, ?, ?, ?)
-	`, user.ID, user.Email, user.PasswordHash, user.OTPSecret, user.OTPVerified)
+		VALUES (?, ?, ?, ?, ?)`
+	_, err := d.db.Exec(d.convertQuery(query), user.ID, user.Email, user.PasswordHash, user.OTPSecret, user.OTPVerified)
 	return err
 }
 
@@ -365,7 +396,8 @@ func (d *Database) CreateUser(user *User) error {
 func (d *Database) EnsureAdminUser() error {
 	// 检查admin用户是否已存在
 	var count int
-	err := d.db.QueryRow(`SELECT COUNT(*) FROM users WHERE id = 'admin'`).Scan(&count)
+	query := `SELECT COUNT(*) FROM users WHERE id = ?`
+	err := d.db.QueryRow(d.convertQuery(query), "admin").Scan(&count)
 	if err != nil {
 		return err
 	}
@@ -390,10 +422,10 @@ func (d *Database) EnsureAdminUser() error {
 // GetUserByEmail 通过邮箱获取用户
 func (d *Database) GetUserByEmail(email string) (*User, error) {
 	var user User
-	err := d.db.QueryRow(`
+	query := `
 		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
-		FROM users WHERE email = ?
-	`, email).Scan(
+		FROM users WHERE email = ?`
+	err := d.db.QueryRow(d.convertQuery(query), email).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
 		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -406,10 +438,10 @@ func (d *Database) GetUserByEmail(email string) (*User, error) {
 // GetUserByID 通过ID获取用户
 func (d *Database) GetUserByID(userID string) (*User, error) {
 	var user User
-	err := d.db.QueryRow(`
+	query := `
 		SELECT id, email, password_hash, otp_secret, otp_verified, created_at, updated_at
-		FROM users WHERE id = ?
-	`, userID).Scan(
+		FROM users WHERE id = ?`
+	err := d.db.QueryRow(d.convertQuery(query), userID).Scan(
 		&user.ID, &user.Email, &user.PasswordHash, &user.OTPSecret,
 		&user.OTPVerified, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -440,29 +472,29 @@ func (d *Database) GetAllUsers() ([]string, error) {
 
 // UpdateUserOTPVerified 更新用户OTP验证状态
 func (d *Database) UpdateUserOTPVerified(userID string, verified bool) error {
-	_, err := d.db.Exec(`UPDATE users SET otp_verified = ? WHERE id = ?`, verified, userID)
+	_, err := d.db.Exec(d.convertQuery(`UPDATE users SET otp_verified = ? WHERE id = ?`), verified, userID)
 	return err
 }
 
 // UpdateUserPassword 更新用户密码
 func (d *Database) UpdateUserPassword(userID, passwordHash string) error {
-	_, err := d.db.Exec(`
+	query := `
 		UPDATE users
 		SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, passwordHash, userID)
+		WHERE id = ?`
+	_, err := d.db.Exec(d.convertQuery(query), passwordHash, userID)
 	return err
 }
 
 // GetAIModels 获取用户的AI模型配置
 func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
-	rows, err := d.db.Query(`
+	query := `
 		SELECT id, user_id, name, provider, enabled, api_key,
 		       COALESCE(custom_api_url, '') as custom_api_url,
 		       COALESCE(custom_model_name, '') as custom_model_name,
 		       created_at, updated_at
-		FROM ai_models WHERE user_id = ? ORDER BY id
-	`, userID)
+		FROM ai_models WHERE user_id = ? ORDER BY id`
+	rows, err := d.db.Query(d.convertQuery(query), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -490,32 +522,30 @@ func (d *Database) GetAIModels(userID string) ([]*AIModelConfig, error) {
 func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, customAPIURL, customModelName string) error {
 	// 先尝试精确匹配 ID（新版逻辑，支持多个相同 provider 的模型）
 	var existingID string
-	err := d.db.QueryRow(`
-		SELECT id FROM ai_models WHERE user_id = ? AND id = ? LIMIT 1
-	`, userID, id).Scan(&existingID)
+	query1 := `SELECT id FROM ai_models WHERE user_id = ? AND id = ? LIMIT 1`
+	err := d.db.QueryRow(d.convertQuery(query1), userID, id).Scan(&existingID)
 
 	if err == nil {
 		// 找到了现有配置（精确匹配 ID），更新它
-		_, err = d.db.Exec(`
+		query2 := `
 			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
-			WHERE id = ? AND user_id = ?
-		`, enabled, apiKey, customAPIURL, customModelName, existingID, userID)
+			WHERE id = ? AND user_id = ?`
+		_, err = d.db.Exec(d.convertQuery(query2), enabled, apiKey, customAPIURL, customModelName, existingID, userID)
 		return err
 	}
 
 	// ID 不存在，尝试兼容旧逻辑：将 id 作为 provider 查找
 	provider := id
-	err = d.db.QueryRow(`
-		SELECT id FROM ai_models WHERE user_id = ? AND provider = ? LIMIT 1
-	`, userID, provider).Scan(&existingID)
+	query3 := `SELECT id FROM ai_models WHERE user_id = ? AND provider = ? LIMIT 1`
+	err = d.db.QueryRow(d.convertQuery(query3), userID, provider).Scan(&existingID)
 
 	if err == nil {
 		// 找到了现有配置（通过 provider 匹配，兼容旧版），更新它
 		log.Printf("⚠️  使用旧版 provider 匹配更新模型: %s -> %s", provider, existingID)
-		_, err = d.db.Exec(`
+		query4 := `
 			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
-			WHERE id = ? AND user_id = ?
-		`, enabled, apiKey, customAPIURL, customModelName, existingID, userID)
+			WHERE id = ? AND user_id = ?`
+		_, err = d.db.Exec(d.convertQuery(query4), enabled, apiKey, customAPIURL, customModelName, existingID, userID)
 		return err
 	}
 
@@ -536,9 +566,8 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 
 	// 获取模型的基本信息
 	var name string
-	err = d.db.QueryRow(`
-		SELECT name FROM ai_models WHERE provider = ? LIMIT 1
-	`, provider).Scan(&name)
+	query5 := `SELECT name FROM ai_models WHERE provider = ? LIMIT 1`
+	err = d.db.QueryRow(d.convertQuery(query5), provider).Scan(&name)
 	if err != nil {
 		// 如果找不到基本信息，使用默认值
 		if provider == "deepseek" {
@@ -569,7 +598,7 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 
 // GetExchanges 获取用户的交易所配置
 func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
-	rows, err := d.db.Query(`
+	query := `
 		SELECT id, user_id, name, type, enabled, api_key, secret_key, testnet, 
 		       COALESCE(passphrase, '') as passphrase,
 		       COALESCE(hyperliquid_wallet_addr, '') as hyperliquid_wallet_addr,
@@ -577,8 +606,8 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		       COALESCE(aster_signer, '') as aster_signer,
 		       COALESCE(aster_private_key, '') as aster_private_key,
 		       created_at, updated_at 
-		FROM exchanges WHERE user_id = ? ORDER BY id
-	`, userID)
+		FROM exchanges WHERE user_id = ? ORDER BY id`
+	rows, err := d.db.Query(d.convertQuery(query), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -610,11 +639,11 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 	log.Printf("🔧 UpdateExchange: userID=%s, id=%s, enabled=%v", userID, id, enabled)
 
 	// 首先尝试更新现有的用户配置
-	result, err := d.db.Exec(`
+	query := `
 		UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, passphrase = ?, testnet = ?, 
 		       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = datetime('now')
-		WHERE id = ? AND user_id = ?
-	`, enabled, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, id, userID)
+		WHERE id = ? AND user_id = ?`
+	result, err := d.db.Exec(d.convertQuery(query), enabled, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, id, userID)
 	if err != nil {
 		log.Printf("❌ UpdateExchange: 更新失败: %v", err)
 		return err
@@ -712,16 +741,16 @@ func (d *Database) CreateExchange(userID, id, name, typ string, enabled bool, ap
 
 // CreateTrader 创建交易员
 func (d *Database) CreateTrader(trader *TraderRecord) error {
-	_, err := d.db.Exec(`
+	query := `
 		INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := d.db.Exec(d.convertQuery(query), trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
 	return err
 }
 
 // GetTraders 获取用户的交易员
 func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
-	rows, err := d.db.Query(`
+	query := `
 		SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
 		       COALESCE(btc_eth_leverage, 5) as btc_eth_leverage, COALESCE(altcoin_leverage, 5) as altcoin_leverage,
 		       COALESCE(trading_symbols, '') as trading_symbols,
@@ -729,8 +758,9 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 		       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0) as override_base_prompt,
 		       COALESCE(system_prompt_template, 'default') as system_prompt_template,
 		       COALESCE(is_cross_margin, 1) as is_cross_margin, created_at, updated_at
-		FROM traders WHERE user_id = ? ORDER BY created_at DESC
-	`, userID)
+		FROM traders WHERE user_id = ? ORDER BY created_at DESC`
+	
+	rows, err := d.db.Query(d.convertQuery(query), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -759,20 +789,20 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 
 // UpdateTraderStatus 更新交易员状态
 func (d *Database) UpdateTraderStatus(userID, id string, isRunning bool) error {
-	_, err := d.db.Exec(`UPDATE traders SET is_running = ? WHERE id = ? AND user_id = ?`, isRunning, id, userID)
+	_, err := d.db.Exec(d.convertQuery(`UPDATE traders SET is_running = ? WHERE id = ? AND user_id = ?`), isRunning, id, userID)
 	return err
 }
 
 // UpdateTrader 更新交易员配置
 func (d *Database) UpdateTrader(trader *TraderRecord) error {
-	_, err := d.db.Exec(`
+	query := `
 		UPDATE traders SET
 			name = ?, ai_model_id = ?, exchange_id = ?, initial_balance = ?,
 			scan_interval_minutes = ?, btc_eth_leverage = ?, altcoin_leverage = ?,
 			trading_symbols = ?, custom_prompt = ?, override_base_prompt = ?,
 			system_prompt_template = ?, is_cross_margin = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND user_id = ?
-	`, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
+		WHERE id = ? AND user_id = ?`
+	_, err := d.db.Exec(d.convertQuery(query), trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
 		trader.ScanIntervalMinutes, trader.BTCETHLeverage, trader.AltcoinLeverage,
 		trader.TradingSymbols, trader.CustomPrompt, trader.OverrideBasePrompt,
 		trader.SystemPromptTemplate, trader.IsCrossMargin, trader.ID, trader.UserID)
@@ -781,19 +811,19 @@ func (d *Database) UpdateTrader(trader *TraderRecord) error {
 
 // UpdateTraderCustomPrompt 更新交易员自定义Prompt
 func (d *Database) UpdateTraderCustomPrompt(userID, id string, customPrompt string, overrideBase bool) error {
-	_, err := d.db.Exec(`UPDATE traders SET custom_prompt = ?, override_base_prompt = ? WHERE id = ? AND user_id = ?`, customPrompt, overrideBase, id, userID)
+	_, err := d.db.Exec(d.convertQuery(`UPDATE traders SET custom_prompt = ?, override_base_prompt = ? WHERE id = ? AND user_id = ?`), customPrompt, overrideBase, id, userID)
 	return err
 }
 
 // UpdateTraderInitialBalance 更新交易员初始余额（用于自动同步交易所实际余额）
 func (d *Database) UpdateTraderInitialBalance(userID, id string, newBalance float64) error {
-	_, err := d.db.Exec(`UPDATE traders SET initial_balance = ? WHERE id = ? AND user_id = ?`, newBalance, id, userID)
+	_, err := d.db.Exec(d.convertQuery(`UPDATE traders SET initial_balance = ? WHERE id = ? AND user_id = ?`), newBalance, id, userID)
 	return err
 }
 
 // DeleteTrader 删除交易员
 func (d *Database) DeleteTrader(userID, id string) error {
-	_, err := d.db.Exec(`DELETE FROM traders WHERE id = ? AND user_id = ?`, id, userID)
+	_, err := d.db.Exec(d.convertQuery(`DELETE FROM traders WHERE id = ? AND user_id = ?`), id, userID)
 	return err
 }
 
@@ -803,7 +833,7 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 	var aiModel AIModelConfig
 	var exchange ExchangeConfig
 
-	err := d.db.QueryRow(`
+	query := `
 		SELECT
 			t.id, t.user_id, t.name, t.ai_model_id, t.exchange_id, t.initial_balance, t.scan_interval_minutes, t.is_running,
 			COALESCE(t.btc_eth_leverage, 5) as btc_eth_leverage,
@@ -829,8 +859,9 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 		FROM traders t
 		JOIN ai_models a ON t.ai_model_id = a.id AND t.user_id = a.user_id
 		JOIN exchanges e ON t.exchange_id = e.id AND t.user_id = e.user_id
-		WHERE t.id = ? AND t.user_id = ?
-	`, traderID, userID).Scan(
+		WHERE t.id = ? AND t.user_id = ?`
+	
+	err := d.db.QueryRow(d.convertQuery(query), traderID, userID).Scan(
 		&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID,
 		&trader.InitialBalance, &trader.ScanIntervalMinutes, &trader.IsRunning,
 		&trader.BTCETHLeverage, &trader.AltcoinLeverage, &trader.TradingSymbols,
@@ -910,10 +941,10 @@ func (d *Database) CreateUserSignalSource(userID, coinPoolURL, oiTopURL string) 
 // GetUserSignalSource 获取用户信号源配置
 func (d *Database) GetUserSignalSource(userID string) (*UserSignalSource, error) {
 	var source UserSignalSource
-	err := d.db.QueryRow(`
+	query := `
 		SELECT id, user_id, coin_pool_url, oi_top_url, created_at, updated_at
-		FROM user_signal_sources WHERE user_id = ?
-	`, userID).Scan(
+		FROM user_signal_sources WHERE user_id = ?`
+	err := d.db.QueryRow(d.convertQuery(query), userID).Scan(
 		&source.ID, &source.UserID, &source.CoinPoolURL, &source.OITopURL,
 		&source.CreatedAt, &source.UpdatedAt,
 	)
@@ -925,10 +956,10 @@ func (d *Database) GetUserSignalSource(userID string) (*UserSignalSource, error)
 
 // UpdateUserSignalSource 更新用户信号源配置
 func (d *Database) UpdateUserSignalSource(userID, coinPoolURL, oiTopURL string) error {
-	_, err := d.db.Exec(`
+	query := `
 		UPDATE user_signal_sources SET coin_pool_url = ?, oi_top_url = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE user_id = ?
-	`, coinPoolURL, oiTopURL, userID)
+		WHERE user_id = ?`
+	_, err := d.db.Exec(d.convertQuery(query), coinPoolURL, oiTopURL, userID)
 	return err
 }
 
@@ -1066,7 +1097,8 @@ func (d *Database) LoadBetaCodesFromFile(filePath string) error {
 // ValidateBetaCode 验证内测码是否有效且未使用
 func (d *Database) ValidateBetaCode(code string) (bool, error) {
 	var used bool
-	err := d.db.QueryRow(`SELECT used FROM beta_codes WHERE code = ?`, code).Scan(&used)
+	query := `SELECT used FROM beta_codes WHERE code = ?`
+	err := d.db.QueryRow(d.convertQuery(query), code).Scan(&used)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return false, nil // 内测码不存在
@@ -1078,10 +1110,10 @@ func (d *Database) ValidateBetaCode(code string) (bool, error) {
 
 // UseBetaCode 使用内测码（标记为已使用）
 func (d *Database) UseBetaCode(code, userEmail string) error {
-	result, err := d.db.Exec(`
+	query := `
 		UPDATE beta_codes SET used = 1, used_by = ?, used_at = CURRENT_TIMESTAMP 
-		WHERE code = ? AND used = 0
-	`, userEmail, code)
+		WHERE code = ? AND used = 0`
+	result, err := d.db.Exec(d.convertQuery(query), userEmail, code)
 	if err != nil {
 		return err
 	}
