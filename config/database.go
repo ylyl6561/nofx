@@ -22,6 +22,11 @@ type Database struct {
 	db *sql.DB
 }
 
+// isPostgreSQL 检查是否使用 PostgreSQL
+func (d *Database) isPostgreSQL() bool {
+	return os.Getenv("DATABASE_URL") != ""
+}
+
 // NewDatabase 创建配置数据库
 func NewDatabase(dbPath string) (*Database, error) {
 	var db *sql.DB
