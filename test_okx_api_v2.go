@@ -172,6 +172,6 @@ func explainErrorCode(code string) {
 	}
 	
 	if explanation, ok := errorCodes[code]; ok {
-		fmt.Printf("   💡 说明: %s\n", explanation)
+		fmt.Printf("   💡 说明XXX: %s\n", explanation)
 	}
 }
