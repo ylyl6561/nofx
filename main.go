@@ -78,13 +78,17 @@ func syncConfigToDatabase(database *config.Database, configFile *ConfigFile) err
 	configs := map[string]string{
 		"admin_mode":           fmt.Sprintf("%t", configFile.AdminMode),
 		"beta_mode":            fmt.Sprintf("%t", configFile.BetaMode),
-		"api_server_port":      strconv.Itoa(configFile.APIServerPort),
 		"use_default_coins":    fmt.Sprintf("%t", configFile.UseDefaultCoins),
 		"coin_pool_api_url":    configFile.CoinPoolAPIURL,
 		"oi_top_api_url":       configFile.OITopAPIURL,
 		"max_daily_loss":       fmt.Sprintf("%.1f", configFile.MaxDailyLoss),
 		"max_drawdown":         fmt.Sprintf("%.1f", configFile.MaxDrawdown),
 		"stop_trading_minutes": strconv.Itoa(configFile.StopTradingMinutes),
+	}
+	
+	// 只有当 api_server_port 大于 0 时才同步（避免覆盖默认的 8080）
+	if configFile.APIServerPort > 0 {
+		configs["api_server_port"] = strconv.Itoa(configFile.APIServerPort)
 	}
 
 	// 同步default_coins（转换为JSON字符串存储）
@@ -312,28 +316,34 @@ func main() {
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println()
 
-	// 获取API服务器端口
+	// 获取API服务器端口 - 优先级：config.json > 环境变量 > 数据库配置 > 默认值
 	apiPort := 8080 // 默认端口
-	log.Printf("🔧 调试: apiPortStr = '%s'", apiPortStr)
 	
-	// 检查环境变量 PORT (可能被某些平台自动设置)
-	if envPort := os.Getenv("PORT"); envPort != "" {
-		log.Printf("🔧 调试: 发现环境变量 PORT = '%s'", envPort)
+	// 1. 优先使用 config.json 中的配置
+	if configFile != nil && configFile.APIServerPort > 0 {
+		apiPort = configFile.APIServerPort
+		log.Printf("🔧 使用 config.json 中的端口: %d", apiPort)
+	} else if envPort := os.Getenv("PORT"); envPort != "" {
+		// 2. 检查环境变量 PORT
+		log.Printf("🔧 发现环境变量 PORT = '%s'", envPort)
 		if port, err := strconv.Atoi(envPort); err == nil {
 			apiPort = port
-			log.Printf("🔧 调试: 使用环境变量 PORT = %d", apiPort)
+			log.Printf("🔧 使用环境变量 PORT: %d", apiPort)
 		} else {
-			log.Printf("🔧 调试: 环境变量 PORT 转换失败: %v", err)
+			log.Printf("🔧 环境变量 PORT 转换失败: %v", err)
 		}
-	} else if apiPortStr != "" {
+	} else if apiPortStr != "" && apiPortStr != "0" {
+		// 3. 使用数据库配置（排除错误的 0 值）
 		if port, err := strconv.Atoi(apiPortStr); err == nil {
 			apiPort = port
-			log.Printf("🔧 调试: 从配置读取端口 = %d", apiPort)
+			log.Printf("🔧 使用数据库配置端口: %d", apiPort)
 		} else {
-			log.Printf("🔧 调试: 端口转换失败: %v", err)
+			log.Printf("🔧 数据库端口转换失败: %v", err)
 		}
+	} else {
+		// 4. 使用默认端口
+		log.Printf("🔧 使用默认端口: %d", apiPort)
 	}
-	log.Printf("🔧 调试: 最终使用端口 = %d", apiPort)
 
 	// 创建并启动API服务器
 	apiServer := api.NewServer(traderManager, database, apiPort)
