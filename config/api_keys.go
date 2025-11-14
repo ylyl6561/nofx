@@ -199,9 +199,8 @@ func (d *Database) GetAPIKeys(userID string) ([]APIKey, error) {
 
 // RevokeAPIKey 撤销API Key
 func (d *Database) RevokeAPIKey(keyID, userID string) error {
-	result, err := d.db.Exec(`
-		UPDATE api_keys SET enabled = 0 WHERE id = ? AND user_id = ?
-	`, keyID, userID)
+	query := `UPDATE api_keys SET enabled = 0 WHERE id = ? AND user_id = ?`
+	result, err := d.db.Exec(d.convertQuery(query), keyID, userID)
 	if err != nil {
 		return err
 	}

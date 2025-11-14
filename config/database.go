@@ -55,6 +55,24 @@ func (d *Database) convertQuery(query string) string {
 	result = strings.ReplaceAll(result, "COALESCE(testnet, 0)", "COALESCE(testnet, false)")
 	result = strings.ReplaceAll(result, "COALESCE(is_running, 0)", "COALESCE(is_running, false)")
 	
+	// 将 SQLite 的布尔比较转换为 PostgreSQL 的布尔比较
+	result = strings.ReplaceAll(result, "enabled = 1", "enabled = true")
+	result = strings.ReplaceAll(result, "enabled = 0", "enabled = false")
+	result = strings.ReplaceAll(result, "testnet = 1", "testnet = true")
+	result = strings.ReplaceAll(result, "testnet = 0", "testnet = false")
+	result = strings.ReplaceAll(result, "is_running = 1", "is_running = true")
+	result = strings.ReplaceAll(result, "is_running = 0", "is_running = false")
+	result = strings.ReplaceAll(result, "otp_verified = 1", "otp_verified = true")
+	result = strings.ReplaceAll(result, "otp_verified = 0", "otp_verified = false")
+	result = strings.ReplaceAll(result, "used = 1", "used = true")
+	result = strings.ReplaceAll(result, "used = 0", "used = false")
+	
+	// 将 SQLite 的布尔赋值转换为 PostgreSQL 的布尔赋值
+	result = strings.ReplaceAll(result, "SET used = 1", "SET used = true")
+	result = strings.ReplaceAll(result, "SET used = 0", "SET used = false")
+	result = strings.ReplaceAll(result, "SET enabled = 1", "SET enabled = true")
+	result = strings.ReplaceAll(result, "SET enabled = 0", "SET enabled = false")
+	
 	return result
 }
 
@@ -995,11 +1013,11 @@ func (d *Database) GetCustomCoins() []string {
 // IsUsingTestnet 检查是否使用测试网（从第一个启用的交易所读取）
 func (d *Database) IsUsingTestnet() bool {
 	var testnet bool
-	err := d.db.QueryRow(`
+	query := `
 		SELECT testnet FROM exchanges 
 		WHERE enabled = 1 
-		LIMIT 1
-	`).Scan(&testnet)
+		LIMIT 1`
+	err := d.db.QueryRow(d.convertQuery(query)).Scan(&testnet)
 	
 	if err != nil {
 		log.Printf("⚠️  检查测试网配置失败: %v，默认使用实盘", err)
@@ -1137,7 +1155,8 @@ func (d *Database) GetBetaCodeStats() (total, used int, err error) {
 		return 0, 0, err
 	}
 
-	err = d.db.QueryRow(`SELECT COUNT(*) FROM beta_codes WHERE used = 1`).Scan(&used)
+	query2 := `SELECT COUNT(*) FROM beta_codes WHERE used = 1`
+	err = d.db.QueryRow(d.convertQuery(query2)).Scan(&used)
 	if err != nil {
 		return 0, 0, err
 	}

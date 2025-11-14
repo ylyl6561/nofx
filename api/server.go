@@ -74,6 +74,21 @@ func (s *Server) setupRoutes() {
 	apiKeyHandlers := handlers.NewAPIKeyHandlers(s.database)
 	tradingAPIHandlers := handlers.NewTradingAPIHandlers(s.database, s.traderManager)
 
+	// 静态文件服务（前端）
+	s.router.Static("/assets", "./web/dist/assets")
+	s.router.StaticFile("/favicon.ico", "./web/dist/favicon.ico")
+	
+	// SPA 路由处理 - 所有非 API 路由都返回 index.html
+	s.router.NoRoute(func(c *gin.Context) {
+		// 如果是 API 路由，返回 404
+		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+			c.JSON(404, gin.H{"error": "API endpoint not found"})
+			return
+		}
+		// 其他路由返回前端 index.html（SPA 路由）
+		c.File("./web/dist/index.html")
+	})
+
 	// API路由组
 	api := s.router.Group("/api")
 	{
