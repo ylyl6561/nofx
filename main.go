@@ -314,11 +314,26 @@ func main() {
 
 	// 获取API服务器端口
 	apiPort := 8080 // 默认端口
-	if apiPortStr != "" {
+	log.Printf("🔧 调试: apiPortStr = '%s'", apiPortStr)
+	
+	// 检查环境变量 PORT (可能被某些平台自动设置)
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		log.Printf("🔧 调试: 发现环境变量 PORT = '%s'", envPort)
+		if port, err := strconv.Atoi(envPort); err == nil {
+			apiPort = port
+			log.Printf("🔧 调试: 使用环境变量 PORT = %d", apiPort)
+		} else {
+			log.Printf("🔧 调试: 环境变量 PORT 转换失败: %v", err)
+		}
+	} else if apiPortStr != "" {
 		if port, err := strconv.Atoi(apiPortStr); err == nil {
 			apiPort = port
+			log.Printf("🔧 调试: 从配置读取端口 = %d", apiPort)
+		} else {
+			log.Printf("🔧 调试: 端口转换失败: %v", err)
 		}
 	}
+	log.Printf("🔧 调试: 最终使用端口 = %d", apiPort)
 
 	// 创建并启动API服务器
 	apiServer := api.NewServer(traderManager, database, apiPort)
