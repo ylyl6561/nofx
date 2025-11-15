@@ -54,6 +54,9 @@ func (d *Database) convertQuery(query string) string {
 	result = strings.ReplaceAll(result, "COALESCE(enabled, 0)", "COALESCE(enabled, false)")
 	result = strings.ReplaceAll(result, "COALESCE(testnet, 0)", "COALESCE(testnet, false)")
 	result = strings.ReplaceAll(result, "COALESCE(is_running, 0)", "COALESCE(is_running, false)")
+
+	// 将 SQLite 的时间函数转换为 PostgreSQL 的时间函数
+	result = strings.ReplaceAll(result, "datetime('now')", "CURRENT_TIMESTAMP")
 	
 	// 将 SQLite 的布尔比较转换为 PostgreSQL 的布尔比较
 	result = strings.ReplaceAll(result, "enabled = 1", "enabled = true")
@@ -606,10 +609,10 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 	}
 
 	log.Printf("✓ 创建新的 AI 模型配置: ID=%s, Provider=%s, Name=%s", newModelID, provider, name)
-	_, err = d.db.Exec(`
+	query6 := `
 		INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url, custom_model_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-	`, newModelID, userID, name, provider, enabled, apiKey, customAPIURL, customModelName)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+	_, err = d.db.Exec(d.convertQuery(query6), newModelID, userID, name, provider, enabled, apiKey, customAPIURL, customModelName)
 
 	return err
 }

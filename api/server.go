@@ -76,6 +76,8 @@ func (s *Server) setupRoutes() {
 
 	// 静态文件服务（前端）
 	s.router.Static("/assets", "./web/dist/assets")
+	s.router.Static("/icons", "./web/dist/icons")
+	s.router.Static("/images", "./web/dist/images")
 	s.router.StaticFile("/favicon.ico", "./web/dist/favicon.ico")
 	
 	// SPA 路由处理 - 所有非 API 路由都返回 index.html
