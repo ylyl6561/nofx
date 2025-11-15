@@ -30,6 +30,8 @@ type IntradayData struct {
 	MACDValues  []float64
 	RSI7Values  []float64
 	RSI14Values []float64
+	Volume      []float64 // 成交量序列
+	ATR14       float64   // 3分钟ATR14
 }
 
 // LongerTermData 长期数据(4小时时间框架)
