@@ -22,9 +22,19 @@ type Database struct {
 	db *sql.DB
 }
 
-// isPostgreSQL 检查是否使用 PostgreSQL
+// IsPostgreSQL 检查是否使用 PostgreSQL（公开方法）
+func (d *Database) IsPostgreSQL() bool {
+	// 检查 DATABASE_URL 或 DB_TYPE 环境变量
+	if os.Getenv("DATABASE_URL") != "" {
+		return true
+	}
+	dbType := os.Getenv("DB_TYPE")
+	return dbType == "postgres" || dbType == "postgresql"
+}
+
+// isPostgreSQL 内部使用的便捷方法
 func (d *Database) isPostgreSQL() bool {
-	return os.Getenv("DATABASE_URL") != ""
+	return d.IsPostgreSQL()
 }
 
 // convertQuery 将 SQLite 查询转换为 PostgreSQL 兼容的查询
@@ -87,10 +97,38 @@ func NewDatabase(dbPath string) (*Database, error) {
 	
 	// 检查是否有 PostgreSQL 环境变量
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		// 生产环境：使用 PostgreSQL
+		// 使用 DATABASE_URL（优先级最高）
 		db, err = sql.Open("postgres", dbURL)
 		dbType = "PostgreSQL"
-		log.Printf("🐘 使用 PostgreSQL 数据库: %s", maskURL(dbURL))
+		log.Printf("🐘 使用 PostgreSQL 数据库 (DATABASE_URL): %s", maskURL(dbURL))
+	} else if os.Getenv("DB_TYPE") == "postgres" || os.Getenv("DB_TYPE") == "postgresql" {
+		// 使用独立的环境变量构建连接字符串
+		host := os.Getenv("DB_HOST")
+		port := os.Getenv("DB_PORT")
+		user := os.Getenv("DB_USER")
+		password := os.Getenv("DB_PASSWORD")
+		dbname := os.Getenv("DB_NAME")
+		sslmode := os.Getenv("DB_SSL_MODE")
+		
+		if host == "" || user == "" || dbname == "" {
+			return nil, fmt.Errorf("PostgreSQL 配置不完整，需要设置 DB_HOST, DB_USER, DB_NAME")
+		}
+		
+		if port == "" {
+			port = "5432"
+		}
+		if sslmode == "" {
+			sslmode = "disable"
+		}
+		
+		// 构建连接字符串
+		connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+			host, port, user, password, dbname, sslmode)
+		
+		db, err = sql.Open("postgres", connStr)
+		dbType = "PostgreSQL"
+		log.Printf("🐘 使用 PostgreSQL 数据库: host=%s port=%s dbname=%s user=%s sslmode=%s",
+			host, port, dbname, user, sslmode)
 	} else {
 		// 开发环境：使用 SQLite
 		db, err = sql.Open("sqlite", dbPath)
@@ -161,20 +199,20 @@ func (d *Database) initDefaultData() error {
 
 	for _, exchange := range exchanges {
 		if d.isPostgreSQL() {
-			// PostgreSQL 使用 ON CONFLICT
+			// PostgreSQL 使用 ON CONFLICT，主键包含 api_key_name
 			_, err := d.db.Exec(`
-				INSERT INTO exchanges (id, user_id, name, type, enabled) 
-				VALUES ($1, 'default', $2, $3, false)
-				ON CONFLICT (id, user_id) DO NOTHING
+				INSERT INTO exchanges (id, user_id, api_key_name, name, type, enabled) 
+				VALUES ($1, 'default', '', $2, $3, false)
+				ON CONFLICT (id, user_id, api_key_name) DO NOTHING
 			`, exchange.id, exchange.name, exchange.typ)
 			if err != nil {
 				return fmt.Errorf("初始化交易所失败: %w", err)
 			}
 		} else {
-			// SQLite 使用 INSERT OR IGNORE
+			// SQLite 使用 INSERT OR IGNORE，主键包含 api_key_name
 			_, err := d.db.Exec(`
-				INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled) 
-				VALUES (?, 'default', ?, ?, 0)
+				INSERT OR IGNORE INTO exchanges (id, user_id, api_key_name, name, type, enabled) 
+				VALUES (?, 'default', '', ?, ?, 0)
 			`, exchange.id, exchange.name, exchange.typ)
 			if err != nil {
 				return fmt.Errorf("初始化交易所失败: %w", err)
@@ -341,14 +379,15 @@ type AIModelConfig struct {
 
 // ExchangeConfig 交易所配置
 type ExchangeConfig struct {
-	ID        string `json:"id"`
-	UserID    string `json:"user_id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Enabled   bool   `json:"enabled"`
-	APIKey    string `json:"apiKey"`
-	SecretKey string `json:"secretKey"`
-	Testnet   bool   `json:"testnet"`
+	ID         string `json:"id"`
+	UserID     string `json:"user_id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Enabled    bool   `json:"enabled"`
+	APIKeyName string `json:"apiKeyName"` // API密钥名称
+	APIKey     string `json:"apiKey"`
+	SecretKey  string `json:"secretKey"`
+	Testnet    bool   `json:"testnet"`
 	// OKX 特定字段
 	Passphrase string `json:"passphrase"` // OKX API Passphrase
 	// Hyperliquid 特定字段
@@ -368,6 +407,7 @@ type TraderRecord struct {
 	Name                 string    `json:"name"`
 	AIModelID            string    `json:"ai_model_id"`
 	ExchangeID           string    `json:"exchange_id"`
+	ExchangeAPIKeyName   string    `json:"exchange_api_key_name"`  // 交易所API密钥名称
 	InitialBalance       float64   `json:"initial_balance"`
 	ScanIntervalMinutes  int       `json:"scan_interval_minutes"`
 	IsRunning            bool      `json:"is_running"`
@@ -620,7 +660,9 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 // GetExchanges 获取用户的交易所配置
 func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 	query := `
-		SELECT id, user_id, name, type, enabled, api_key, secret_key, testnet, 
+		SELECT id, user_id, name, type, enabled, 
+		       COALESCE(api_key_name, '') as api_key_name,
+		       api_key, secret_key, testnet, 
 		       COALESCE(passphrase, '') as passphrase,
 		       COALESCE(hyperliquid_wallet_addr, '') as hyperliquid_wallet_addr,
 		       COALESCE(aster_user, '') as aster_user,
@@ -640,7 +682,7 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 		var exchange ExchangeConfig
 		err := rows.Scan(
 			&exchange.ID, &exchange.UserID, &exchange.Name, &exchange.Type,
-			&exchange.Enabled, &exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
+			&exchange.Enabled, &exchange.APIKeyName, &exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
 			&exchange.Passphrase,
 			&exchange.HyperliquidWalletAddr, &exchange.AsterUser,
 			&exchange.AsterSigner, &exchange.AsterPrivateKey,
@@ -655,16 +697,26 @@ func (d *Database) GetExchanges(userID string) ([]*ExchangeConfig, error) {
 	return exchanges, nil
 }
 
-// UpdateExchange 更新交易所配置，如果不存在则创建用户特定配置
-func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secretKey, passphrase string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
-	log.Printf("🔧 UpdateExchange: userID=%s, id=%s, enabled=%v", userID, id, enabled)
+func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKeyName, apiKey, secretKey, passphrase string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
+	log.Printf("🔧 UpdateExchange: userID=%s, id=%s, enabled=%v, apiKeyName=%s", userID, id, enabled, apiKeyName)
 
 	// 首先尝试更新现有的用户配置
+	// 使用静态的 UPDATE 语句，避免动态拼接导致的语法错误
+	// 所有字段都会被更新，空字符串会覆盖旧值
 	query := `
-		UPDATE exchanges SET enabled = ?, api_key = ?, secret_key = ?, passphrase = ?, testnet = ?, 
-		       hyperliquid_wallet_addr = ?, aster_user = ?, aster_signer = ?, aster_private_key = ?, updated_at = datetime('now')
-		WHERE id = ? AND user_id = ?`
-	result, err := d.db.Exec(d.convertQuery(query), enabled, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, id, userID)
+		UPDATE exchanges SET 
+			enabled = ?, 
+			api_key = ?, 
+			secret_key = ?, 
+			passphrase = ?, 
+			testnet = ?, 
+			hyperliquid_wallet_addr = ?, 
+			aster_user = ?, 
+			aster_signer = ?, 
+			aster_private_key = ?, 
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND user_id = ? AND api_key_name = ?`
+	result, err := d.db.Exec(d.convertQuery(query), enabled, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, id, userID, apiKeyName)
 	if err != nil {
 		log.Printf("❌ UpdateExchange: 更新失败: %v", err)
 		return err
@@ -702,11 +754,12 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKey, secre
 		log.Printf("🆕 UpdateExchange: 创建新记录 ID=%s, name=%s, type=%s", id, name, typ)
 
 		// 创建用户特定的配置，使用原始的交易所ID
-		_, err = d.db.Exec(`
-			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, passphrase, testnet, 
+		insertQuery := `
+			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key_name, api_key, secret_key, passphrase, testnet, 
 			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-		`, id, userID, name, typ, enabled, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+		`
+		_, err = d.db.Exec(d.convertQuery(insertQuery), id, userID, name, typ, enabled, apiKeyName, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
 
 		if err != nil {
 			log.Printf("❌ UpdateExchange: 创建记录失败: %v", err)
@@ -741,21 +794,21 @@ func (d *Database) CreateAIModel(userID, id, name, provider string, enabled bool
 }
 
 // CreateExchange 创建交易所配置
-func (d *Database) CreateExchange(userID, id, name, typ string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
+func (d *Database) CreateExchange(userID, id, apiKeyName, name, typ string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
 	if d.isPostgreSQL() {
-		// PostgreSQL 使用 ON CONFLICT
+		// PostgreSQL 使用 ON CONFLICT，主键包含 api_key_name
 		_, err := d.db.Exec(`
-			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-			ON CONFLICT (id, user_id) DO NOTHING
-		`, id, userID, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+			INSERT INTO exchanges (id, user_id, api_key_name, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			ON CONFLICT (id, user_id, api_key_name) DO NOTHING
+		`, id, userID, apiKeyName, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
 		return err
 	} else {
-		// SQLite 使用 INSERT OR IGNORE
+		// SQLite 使用 INSERT OR IGNORE，主键包含 api_key_name
 		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO exchanges (id, user_id, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, id, userID, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+			INSERT OR IGNORE INTO exchanges (id, user_id, api_key_name, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, id, userID, apiKeyName, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
 		return err
 	}
 }
@@ -763,22 +816,23 @@ func (d *Database) CreateExchange(userID, id, name, typ string, enabled bool, ap
 // CreateTrader 创建交易员
 func (d *Database) CreateTrader(trader *TraderRecord) error {
 	query := `
-		INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := d.db.Exec(d.convertQuery(query), trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+		INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, exchange_api_key_name, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := d.db.Exec(d.convertQuery(query), trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.ExchangeAPIKeyName, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
 	return err
 }
 
 // GetTraders 获取用户的交易员
 func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 	query := `
-		SELECT id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running,
+		SELECT id, user_id, name, ai_model_id, exchange_id, COALESCE(exchange_api_key_name, '') as exchange_api_key_name,
+		       initial_balance, scan_interval_minutes, is_running,
 		       COALESCE(btc_eth_leverage, 5) as btc_eth_leverage, COALESCE(altcoin_leverage, 5) as altcoin_leverage,
 		       COALESCE(trading_symbols, '') as trading_symbols,
-		       COALESCE(use_coin_pool, 0) as use_coin_pool, COALESCE(use_oi_top, 0) as use_oi_top,
-		       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0) as override_base_prompt,
+		       COALESCE(use_coin_pool, false) as use_coin_pool, COALESCE(use_oi_top, false) as use_oi_top,
+		       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, false) as override_base_prompt,
 		       COALESCE(system_prompt_template, 'default') as system_prompt_template,
-		       COALESCE(is_cross_margin, 1) as is_cross_margin, created_at, updated_at
+		       COALESCE(is_cross_margin, true) as is_cross_margin, created_at, updated_at
 		FROM traders WHERE user_id = ? ORDER BY created_at DESC`
 	
 	rows, err := d.db.Query(d.convertQuery(query), userID)
@@ -791,7 +845,7 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 	for rows.Next() {
 		var trader TraderRecord
 		err := rows.Scan(
-			&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID,
+			&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID, &trader.ExchangeAPIKeyName,
 			&trader.InitialBalance, &trader.ScanIntervalMinutes, &trader.IsRunning,
 			&trader.BTCETHLeverage, &trader.AltcoinLeverage, &trader.TradingSymbols,
 			&trader.UseCoinPool, &trader.UseOITop,
@@ -856,34 +910,41 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 
 	query := `
 		SELECT
-			t.id, t.user_id, t.name, t.ai_model_id, t.exchange_id, t.initial_balance, t.scan_interval_minutes, t.is_running,
+			t.id, t.user_id, t.name, t.ai_model_id, t.exchange_id, COALESCE(t.exchange_api_key_name, '') as exchange_api_key_name,
+			t.initial_balance, t.scan_interval_minutes, t.is_running,
 			COALESCE(t.btc_eth_leverage, 5) as btc_eth_leverage,
 			COALESCE(t.altcoin_leverage, 5) as altcoin_leverage,
 			COALESCE(t.trading_symbols, '') as trading_symbols,
-			COALESCE(t.use_coin_pool, 0) as use_coin_pool,
-			COALESCE(t.use_oi_top, 0) as use_oi_top,
+			COALESCE(t.use_coin_pool, false) as use_coin_pool,
+			COALESCE(t.use_oi_top, false) as use_oi_top,
 			COALESCE(t.custom_prompt, '') as custom_prompt,
-			COALESCE(t.override_base_prompt, 0) as override_base_prompt,
+			COALESCE(t.override_base_prompt, false) as override_base_prompt,
 			COALESCE(t.system_prompt_template, 'default') as system_prompt_template,
-			COALESCE(t.is_cross_margin, 1) as is_cross_margin,
+			COALESCE(t.is_cross_margin, true) as is_cross_margin,
 			t.created_at, t.updated_at,
 			a.id, a.user_id, a.name, a.provider, a.enabled, a.api_key,
 			COALESCE(a.custom_api_url, '') as custom_api_url,
 			COALESCE(a.custom_model_name, '') as custom_model_name,
 			a.created_at, a.updated_at,
-			e.id, e.user_id, e.name, e.type, e.enabled, e.api_key, e.secret_key, e.testnet,
+			e.id, e.user_id, COALESCE(e.api_key_name, '') as api_key_name, e.name, e.type, e.enabled, e.api_key, e.secret_key, e.testnet,
 			COALESCE(e.hyperliquid_wallet_addr, '') as hyperliquid_wallet_addr,
 			COALESCE(e.aster_user, '') as aster_user,
 			COALESCE(e.aster_signer, '') as aster_signer,
 			COALESCE(e.aster_private_key, '') as aster_private_key,
+			COALESCE(e.passphrase, '') as passphrase,
 			e.created_at, e.updated_at
 		FROM traders t
 		JOIN ai_models a ON t.ai_model_id = a.id AND t.user_id = a.user_id
-		JOIN exchanges e ON t.exchange_id = e.id AND t.user_id = e.user_id
-		WHERE t.id = ? AND t.user_id = ?`
+		LEFT JOIN exchanges e ON t.exchange_id = e.id AND t.user_id = e.user_id 
+			AND (COALESCE(t.exchange_api_key_name, '') = COALESCE(e.api_key_name, '') 
+			     OR (COALESCE(t.exchange_api_key_name, '') = '' AND e.api_key_name IS NULL)
+			     OR (COALESCE(t.exchange_api_key_name, '') = '' AND COALESCE(e.api_key_name, '') = ''))
+		WHERE t.id = ? AND t.user_id = ?
+		ORDER BY e.created_at DESC
+		LIMIT 1`
 	
 	err := d.db.QueryRow(d.convertQuery(query), traderID, userID).Scan(
-		&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID,
+		&trader.ID, &trader.UserID, &trader.Name, &trader.AIModelID, &trader.ExchangeID, &trader.ExchangeAPIKeyName,
 		&trader.InitialBalance, &trader.ScanIntervalMinutes, &trader.IsRunning,
 		&trader.BTCETHLeverage, &trader.AltcoinLeverage, &trader.TradingSymbols,
 		&trader.UseCoinPool, &trader.UseOITop,
@@ -893,9 +954,10 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 		&aiModel.ID, &aiModel.UserID, &aiModel.Name, &aiModel.Provider, &aiModel.Enabled, &aiModel.APIKey,
 		&aiModel.CustomAPIURL, &aiModel.CustomModelName,
 		&aiModel.CreatedAt, &aiModel.UpdatedAt,
-		&exchange.ID, &exchange.UserID, &exchange.Name, &exchange.Type, &exchange.Enabled,
+		&exchange.ID, &exchange.UserID, &exchange.APIKeyName, &exchange.Name, &exchange.Type, &exchange.Enabled,
 		&exchange.APIKey, &exchange.SecretKey, &exchange.Testnet,
 		&exchange.HyperliquidWalletAddr, &exchange.AsterUser, &exchange.AsterSigner, &exchange.AsterPrivateKey,
+		&exchange.Passphrase,
 		&exchange.CreatedAt, &exchange.UpdatedAt,
 	)
 

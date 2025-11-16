@@ -111,6 +111,7 @@ export interface Exchange {
   name: string
   type: 'cex' | 'dex'
   enabled: boolean
+  apiKeyName?: string // API密钥名称
   apiKey?: string
   secretKey?: string
   passphrase?: string // OKX API Passphrase
@@ -127,6 +128,7 @@ export interface CreateTraderRequest {
   name: string
   ai_model_id: string
   exchange_id: string
+  exchange_api_key_name?: string
   initial_balance: number
   scan_interval_minutes?: number
   btc_eth_leverage?: number
@@ -155,6 +157,7 @@ export interface UpdateExchangeConfigRequest {
   exchanges: {
     [key: string]: {
       enabled: boolean
+      api_key_name: string // API密钥名称
       api_key: string
       secret_key: string
       testnet?: boolean

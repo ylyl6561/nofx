@@ -454,6 +454,7 @@ type UpdateModelConfigRequest struct {
 type UpdateExchangeConfigRequest struct {
 	Exchanges map[string]struct {
 		Enabled               bool   `json:"enabled"`
+		APIKeyName            string `json:"api_key_name"`    // API密钥名称
 		APIKey                string `json:"api_key"`
 		SecretKey             string `json:"secret_key"`
 		Passphrase            string `json:"passphrase"` // OKX API Passphrase
@@ -675,6 +676,7 @@ type UpdateTraderRequest struct {
 	TradingSymbols      string  `json:"trading_symbols"`
 	CustomPrompt        string  `json:"custom_prompt"`
 	OverrideBasePrompt  bool    `json:"override_base_prompt"`
+	SystemPromptTemplate string  `json:"system_prompt_template"`
 	IsCrossMargin       *bool   `json:"is_cross_margin"`
 }
 
@@ -814,7 +816,8 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 	// 校验交易员是否属于当前用户
 	_, _, _, err := s.database.GetTraderConfig(userID, traderID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在或无访问权限"})
+		log.Printf("❌ 获取交易员配置失败 [用户: %s, 交易员: %s]: %v", userID, traderID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("交易员不存在或无访问权限: %v", err)})
 		return
 	}
 
@@ -1109,7 +1112,7 @@ func (s *Server) handleUpdateExchangeConfigs(c *gin.Context) {
 
 	// 更新每个交易所的配置
 	for exchangeID, exchangeData := range req.Exchanges {
-		err := s.database.UpdateExchange(userID, exchangeID, exchangeData.Enabled, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Passphrase, exchangeData.Testnet, exchangeData.HyperliquidWalletAddr, exchangeData.AsterUser, exchangeData.AsterSigner, exchangeData.AsterPrivateKey)
+		err := s.database.UpdateExchange(userID, exchangeID, exchangeData.Enabled, exchangeData.APIKeyName, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Passphrase, exchangeData.Testnet, exchangeData.HyperliquidWalletAddr, exchangeData.AsterUser, exchangeData.AsterSigner, exchangeData.AsterPrivateKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新交易所 %s 失败: %v", exchangeID, err)})
 			return
@@ -1192,12 +1195,13 @@ func (s *Server) handleTraderList(c *gin.Context) {
 		// 返回完整的 AIModelID（如 "admin_deepseek"），不要截断
 		// 前端需要完整 ID 来验证模型是否存在（与 handleGetTraderConfig 保持一致）
 		result = append(result, map[string]interface{}{
-			"trader_id":       trader.ID,
-			"trader_name":     trader.Name,
-			"ai_model":        trader.AIModelID, // 使用完整 ID
-			"exchange_id":     trader.ExchangeID,
-			"is_running":      isRunning,
-			"initial_balance": trader.InitialBalance,
+			"trader_id":              trader.ID,
+			"trader_name":            trader.Name,
+			"ai_model":               trader.AIModelID, // 使用完整 ID
+			"exchange_id":            trader.ExchangeID,
+			"exchange_api_key_name":  trader.ExchangeAPIKeyName,
+			"is_running":             isRunning,
+			"initial_balance":        trader.InitialBalance,
 		})
 	}
 

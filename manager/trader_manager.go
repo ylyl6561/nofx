@@ -840,17 +840,17 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 			continue
 		}
 
-		// 从已查询的列表中查找交易所配置
+		// 从已查询的列表中查找交易所配置（需要同时匹配 ID 和 API Key Name）
 		var exchangeCfg *config.ExchangeConfig
 		for _, exchange := range exchanges {
-			if exchange.ID == traderCfg.ExchangeID {
+			if exchange.ID == traderCfg.ExchangeID && exchange.APIKeyName == traderCfg.ExchangeAPIKeyName {
 				exchangeCfg = exchange
 				break
 			}
 		}
 
 		if exchangeCfg == nil {
-			log.Printf("⚠️ 交易员 %s 的交易所 %s 不存在，跳过", traderCfg.Name, traderCfg.ExchangeID)
+			log.Printf("⚠️ 交易员 %s 的交易所 %s (API Key: %s) 不存在，跳过", traderCfg.Name, traderCfg.ExchangeID, traderCfg.ExchangeAPIKeyName)
 			continue
 		}
 

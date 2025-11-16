@@ -30,6 +30,7 @@ func (d *Database) createTables() error {
 			`CREATE TABLE IF NOT EXISTS exchanges (
 				id TEXT NOT NULL,
 				user_id TEXT NOT NULL DEFAULT 'default',
+				api_key_name TEXT NOT NULL,
 				name TEXT NOT NULL,
 				type TEXT NOT NULL,
 				enabled BOOLEAN DEFAULT false,
@@ -43,7 +44,7 @@ func (d *Database) createTables() error {
 				aster_private_key TEXT DEFAULT '',
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-				PRIMARY KEY (id, user_id)
+				PRIMARY KEY (id, user_id, api_key_name)
 			)`,
 			
 			// 用户信号源配置表
@@ -64,6 +65,7 @@ func (d *Database) createTables() error {
 				name TEXT NOT NULL,
 				ai_model_id TEXT NOT NULL,
 				exchange_id TEXT NOT NULL,
+				exchange_api_key_name TEXT DEFAULT '',
 				initial_balance REAL NOT NULL,
 				scan_interval_minutes INTEGER DEFAULT 3,
 				is_running BOOLEAN DEFAULT false,
@@ -159,6 +161,7 @@ func (d *Database) createTables() error {
 			`CREATE TABLE IF NOT EXISTS exchanges (
 				id TEXT NOT NULL,
 				user_id TEXT NOT NULL DEFAULT 'default',
+				api_key_name TEXT NOT NULL,
 				name TEXT NOT NULL,
 				type TEXT NOT NULL,
 				enabled BOOLEAN DEFAULT 0,
@@ -172,7 +175,7 @@ func (d *Database) createTables() error {
 				aster_private_key TEXT DEFAULT '',
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				PRIMARY KEY (id, user_id)
+				PRIMARY KEY (id, user_id, api_key_name)
 			)`,
 			
 			// 用户信号源配置表
@@ -193,6 +196,7 @@ func (d *Database) createTables() error {
 				name TEXT NOT NULL,
 				ai_model_id TEXT NOT NULL,
 				exchange_id TEXT NOT NULL,
+				exchange_api_key_name TEXT DEFAULT '',
 				initial_balance REAL NOT NULL,
 				scan_interval_minutes INTEGER DEFAULT 3,
 				is_running BOOLEAN DEFAULT 0,
@@ -309,6 +313,57 @@ func (d *Database) createTables() error {
 	for _, query := range queries {
 		if _, err := d.db.Exec(query); err != nil {
 			return fmt.Errorf("执行SQL失败 [%s]: %w", query, err)
+		}
+	}
+	
+	// 执行数据库迁移
+	if err := d.runMigrations(); err != nil {
+		return fmt.Errorf("执行数据库迁移失败: %w", err)
+	}
+	
+	return nil
+}
+
+// runMigrations 执行数据库迁移
+func (d *Database) runMigrations() error {
+	if d.isPostgreSQL() {
+		// PostgreSQL 迁移：添加 exchange_api_key_name 列到 traders 表
+		migrations := []string{
+			// 检查列是否存在，如果不存在则添加
+			`DO $$ 
+			BEGIN 
+				IF NOT EXISTS (
+					SELECT 1 FROM information_schema.columns 
+					WHERE table_name='traders' AND column_name='exchange_api_key_name'
+				) THEN
+					ALTER TABLE traders ADD COLUMN exchange_api_key_name TEXT DEFAULT '';
+				END IF;
+			END $$;`,
+		}
+		
+		for _, migration := range migrations {
+			if _, err := d.db.Exec(migration); err != nil {
+				return fmt.Errorf("执行迁移失败 [%s]: %w", migration, err)
+			}
+		}
+	} else {
+		// SQLite 迁移：添加 exchange_api_key_name 列到 traders 表
+		// SQLite 不支持 IF NOT EXISTS for ALTER TABLE，需要先检查
+		var columnExists int
+		err := d.db.QueryRow(`
+			SELECT COUNT(*) FROM pragma_table_info('traders') 
+			WHERE name='exchange_api_key_name'
+		`).Scan(&columnExists)
+		
+		if err != nil {
+			return fmt.Errorf("检查列是否存在失败: %w", err)
+		}
+		
+		if columnExists == 0 {
+			_, err := d.db.Exec(`ALTER TABLE traders ADD COLUMN exchange_api_key_name TEXT DEFAULT ''`)
+			if err != nil {
+				return fmt.Errorf("添加 exchange_api_key_name 列失败: %w", err)
+			}
 		}
 	}
 	

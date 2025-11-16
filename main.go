@@ -161,14 +161,16 @@ func loadBetaCodesToDatabase(database *config.Database) error {
 }
 
 func main() {
+	// Load environment variables from .env file if it exists.
+	// This is for local development convenience. In production, env vars should be set directly.
+	if err := godotenv.Load(); err != nil {
+		log.Println("📄 No .env file found, using environment variables from OS")
+	}
+
 	fmt.Println("╔════════════════════════════════════════════════════════════╗")
 	fmt.Println("║    🤖 AI多模型交易系统 - 支持 DeepSeek & Qwen            ║")
 	fmt.Println("╚════════════════════════════════════════════════════════════╝")
 	fmt.Println()
-
-	// Load environment variables from .env file if present (for local/dev runs)
-	// In Docker Compose, variables are injected by the runtime and this is harmless.
-	_ = godotenv.Load()
 
 	// 初始化数据库配置
 	dbPath := "config.db"
@@ -189,7 +191,10 @@ func main() {
 	}
 	defer database.Close()
 
-	// 同步config.json到数据库
+	// 只有使用 SQLite 时才同步 config.json 到数据库
+	// PostgreSQL 数据库是共享的，配置已经存在
+	// if !database.IsPostgreSQL() {
+		// 同步config.json到数据库
 	if err := syncConfigToDatabase(database, configFile); err != nil {
 		log.Printf("⚠️  同步config.json到数据库失败: %v", err)
 	}
@@ -198,6 +203,9 @@ func main() {
 	if err := loadBetaCodesToDatabase(database); err != nil {
 		log.Printf("⚠️  加载内测码到数据库失败: %v", err)
 	}
+	// } else {
+	// 	log.Printf("🐘 使用 PostgreSQL，跳过 config.json 同步（配置已存在于共享数据库）")
+	// }
 
 	// 获取系统配置
 	useDefaultCoinsStr, _ := database.GetSystemConfig("use_default_coins")

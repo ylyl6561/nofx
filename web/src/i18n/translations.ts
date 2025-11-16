@@ -410,7 +410,6 @@ export const translations = {
     startWithCrypto:
       'Starting with crypto markets, expanding to TradFi. NOFX is the infrastructure of AgentFi.',
     getStartedNow: 'Get Started Now',
-    viewSourceCode: 'View Source Code',
 
     // Features Section
     coreFeatures: 'Core Features',
@@ -1053,19 +1052,18 @@ export const translations = {
     signUp: '注册',
 
     // Hero Section
-    githubStarsInDays: '3 天内 2.5K+ GitHub Stars',
+    githubStarsInDays: 'NOFX：3 天内 2.5K+ GitHub Stars',
     heroTitle1: 'Read the Market.',
     heroTitle2: 'Write the Trade.',
     heroDescription:
-      'NOFX 是 AI 交易的未来标准——一个开放、社区驱动的代理式交易操作系统。支持 Binance、Aster DEX 等交易所，自托管、多代理竞争，让 AI 为你自动决策、执行和优化交易。',
-    poweredBy: '由 Aster DEX 和 Binance 提供支持，Amber.ac 战略投资。',
+      'AI 交易的未来标准，一个开放、社区驱动的代理式交易操作系统。支持 Binance、Aster DEX 等交易所，自托管、多代理竞争，让 AI 为你自动决策、执行和优化交易。',
+    poweredBy: '由基于NOFX开源项目构建',
 
     // Landing Page CTA
     readyToDefine: '准备好定义 AI 交易的未来吗？',
     startWithCrypto:
       '从加密市场起步，扩展到 TradFi。NOFX 是 AgentFi 的基础架构。',
     getStartedNow: '立即开始',
-    viewSourceCode: '查看源码',
 
     // Features Section
     coreFeatures: '核心功能',
@@ -1110,20 +1108,20 @@ export const translations = {
     // How It Works Section
     howToStart: '如何开始使用 NOFX',
     fourSimpleSteps: '四个简单步骤，开启 AI 自动交易之旅',
-    step1Title: '拉取 GitHub 仓库',
+    step1Title: '注册账号',
     step1Desc:
-      'git clone https://github.com/tinkle-community/nofx 并切换到 dev 分支测试新功能。',
-    step2Title: '配置环境',
+      '访问 NOFX 平台，注册账号。',
+    step2Title: '配置平台API KEY',
     step2Desc:
-      '前端设置交易所 API（如 Binance、Hyperliquid）、AI 模型和自定义提示词。',
-    step3Title: '部署与运行',
+      '在 NOFX 平台设置交易所 API（如 Binance、Hyperliquid）、AI 模型和自定义提示词。',
+    step3Title: '创建AI交易员',
     step3Desc:
-      '一键 Docker 部署，启动 AI 代理。注意：高风险市场，仅用闲钱测试。',
-    step4Title: '优化与贡献',
-    step4Desc: '监控交易，提交 PR 改进框架。加入 Telegram 分享策略。',
+      '在 NOFX 平台创建AI交易员，设置交易参数。',
+    step4Title: '开始交易',
+    step4Desc: '平台监控交易，提交 PR 改进框架。',
     importantRiskWarning: '重要风险提示',
     riskWarningText:
-      'dev 分支不稳定，勿用无法承受损失的资金。NOFX 非托管，无官方策略。交易有风险，投资需谨慎。',
+      '非托管，无官方策略。交易有风险，投资需谨慎。',
 
     // Community Section (testimonials are kept as-is since they are quotes)
 

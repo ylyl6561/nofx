@@ -55,6 +55,40 @@ func New() *Client {
 	}
 }
 
+// NewDeepSeekClient 创建DeepSeek客户端
+func NewDeepSeekClient() *Client {
+	client := New()
+	client.Provider = ProviderDeepSeek
+	client.BaseURL = "https://api.deepseek.com/v1"
+	client.Model = "deepseek-chat"
+	return client
+}
+
+// NewQwenClient 创建Qwen客户端
+func NewQwenClient() *Client {
+	client := New()
+	client.Provider = ProviderQwen
+	client.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	client.Model = "qwen-plus"
+	return client
+}
+
+// SetCustomAPI 设置自定义OpenAI兼容API
+func (client *Client) SetAPIKey(apiKey, apiURL, customModel string) {
+	client.Provider = ProviderCustom
+	client.APIKey = apiKey
+
+	// 检查URL是否以#结尾，如果是则使用完整URL（不添加/chat/completions）
+	if strings.HasSuffix(apiURL, "#") {
+		client.BaseURL = strings.TrimSuffix(apiURL, "#")
+		client.UseFullURL = true
+	} else {
+		client.BaseURL = apiURL
+		client.UseFullURL = false
+	}
+
+	client.Model = customModel
+}
 // SetDeepSeekAPIKey 设置DeepSeek API密钥
 // customURL 为空时使用默认URL，customModel 为空时使用默认模型
 func (client *Client) SetDeepSeekAPIKey(apiKey string, customURL string, customModel string) {
@@ -304,4 +338,14 @@ func isRetryableError(err error) bool {
 		}
 	}
 	return false
+}
+
+// setAuthHeader 设置认证头（实现AIClient接口）
+func (client *Client) setAuthHeader(reqHeaders http.Header) {
+	reqHeaders.Set("Authorization", fmt.Sprintf("Bearer %s", client.APIKey))
+}
+
+// GetModelName 获取当前使用的模型名称
+func (client *Client) GetModelName() string {
+	return client.Model
 }

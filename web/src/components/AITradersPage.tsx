@@ -59,7 +59,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const [showExchangeModal, setShowExchangeModal] = useState(false)
   const [showSignalSourceModal, setShowSignalSourceModal] = useState(false)
   const [editingModel, setEditingModel] = useState<string | null>(null)
-  const [editingExchange, setEditingExchange] = useState<string | null>(null)
+  const [editingExchange, setEditingExchange] = useState<Exchange | null>(null)
   const [editingTrader, setEditingTrader] = useState<any>(null)
   const [allModels, setAllModels] = useState<AIModel[]>([])
   const [allExchanges, setAllExchanges] = useState<Exchange[]>([])
@@ -291,9 +291,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
-  const handleExchangeClick = (exchangeId: string) => {
-    if (!isExchangeInUse(exchangeId)) {
-      setEditingExchange(exchangeId)
+  const handleExchangeClick = (exchange: Exchange) => {
+    if (!isExchangeInUse(exchange.id)) {
+      setEditingExchange(exchange)
       setShowExchangeModal(true)
     }
   }
@@ -412,34 +412,23 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
-  const handleDeleteExchangeConfig = async (exchangeId: string) => {
+  const handleDeleteExchangeConfig = async (exchangeId: string, apiKeyName: string) => {
     if (!confirm(t('confirmDeleteExchange', language))) return
 
     try {
-      // 将该交易所设置为禁用并清空敏感信息
+      // 从列表中移除该交易所配置
       const updatedExchanges =
-        allExchanges?.map((e) =>
-          e.id === exchangeId
-            ? { 
-                ...e, 
-                apiKey: '', 
-                secretKey: '', 
-                passphrase: '',
-                enabled: false,
-                hyperliquidWalletAddr: '',
-                asterUser: '',
-                asterSigner: '',
-                asterPrivateKey: '',
-              }
-            : e
+        allExchanges?.filter((e) => 
+          !(e.id === exchangeId && e.apiKeyName === apiKeyName)
         ) || []
 
       const request = {
         exchanges: Object.fromEntries(
           updatedExchanges.map((exchange) => [
-            exchange.id,
+            `${exchange.id}_${exchange.apiKeyName || 'default'}`,
             {
               enabled: exchange.enabled,
+              api_key_name: exchange.apiKeyName || '',
               api_key: exchange.apiKey || '',
               secret_key: exchange.secretKey || '',
               passphrase: exchange.passphrase || '',
@@ -469,6 +458,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
   const handleSaveExchangeConfig = async (
     exchangeId: string,
+    apiKeyName: string,
     apiKey: string,
     secretKey?: string,
     testnet?: boolean,
@@ -499,6 +489,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             e.id === exchangeId
               ? {
                   ...e,
+                  apiKeyName,
                   apiKey,
                   secretKey,
                   passphrase,
@@ -515,6 +506,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         // 添加新配置
         const newExchange = {
           ...exchangeToUpdate,
+          apiKeyName,
           apiKey,
           secretKey,
           passphrase,
@@ -534,6 +526,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             exchange.id,
             {
               enabled: exchange.enabled,
+              api_key_name: exchange.apiKeyName || '',
               api_key: exchange.apiKey || '',
               secret_key: exchange.secretKey || '',
               passphrase: exchange.passphrase || '',
@@ -745,7 +738,15 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             />
             {t('aiModels', language)}
           </h3>
-          <div className="space-y-2 md:space-y-3">
+          <div 
+            className="space-y-2 md:space-y-3"
+            style={{
+              maxHeight: '320px',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              paddingRight: '4px'
+            }}
+          >
             {configuredModels.map((model) => {
               const inUse = isModelInUse(model.id)
               return (
@@ -825,30 +826,46 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             />
             {t('exchanges', language)}
           </h3>
-          <div className="space-y-2 md:space-y-3">
+          <div 
+            className="space-y-2 md:space-y-3"
+            style={{
+              maxHeight: '320px',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              paddingRight: '4px'
+            }}
+          >
             {configuredExchanges.map((exchange) => {
               const inUse = isExchangeInUse(exchange.id)
               return (
                 <div
-                  key={exchange.id}
+                  key={`${exchange.id}-${exchange.apiKeyName || 'default'}`}
                   className={`flex items-center justify-between p-2 md:p-3 rounded transition-all ${
                     inUse
                       ? 'cursor-not-allowed'
                       : 'cursor-pointer hover:bg-gray-700'
                   }`}
                   style={{ background: '#0B0E11', border: '1px solid #2B3139' }}
-                  onClick={() => handleExchangeClick(exchange.id)}
+                  onClick={() => handleExchangeClick(exchange)}
                 >
-                  <div className="flex items-center gap-2 md:gap-3">
+                  <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
                     <div className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center flex-shrink-0">
                       {getExchangeIcon(exchange.id, { width: 28, height: 28 })}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div
                         className="font-semibold text-sm md:text-base truncate"
                         style={{ color: '#EAECEF' }}
                       >
                         {getShortName(exchange.name)}
+                        {exchange.apiKeyName && (
+                          <span 
+                            className="ml-2 text-xs font-normal"
+                            style={{ color: '#F0B90B' }}
+                          >
+                            ({exchange.apiKeyName})
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs" style={{ color: '#848E9C' }}>
                         {exchange.type.toUpperCase()} •{' '}
@@ -1112,8 +1129,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       {showExchangeModal && (
         <ExchangeConfigModal
           allExchanges={supportedExchanges}
-          userExchanges={allExchanges}
-          editingExchangeId={editingExchange}
+          editingExchange={editingExchange}
           onSave={handleSaveExchangeConfig}
           onDelete={handleDeleteExchangeConfig}
           onClose={() => {
@@ -1581,18 +1597,17 @@ function ModelConfigModal({
 // Exchange Configuration Modal Component
 function ExchangeConfigModal({
   allExchanges,
-  userExchanges,
-  editingExchangeId,
+  editingExchange,
   onSave,
   onDelete,
   onClose,
   language,
 }: {
   allExchanges: Exchange[]
-  userExchanges: Exchange[]
-  editingExchangeId: string | null
+  editingExchange: Exchange | null
   onSave: (
     exchangeId: string,
+    apiKeyName: string,
     apiKey: string,
     secretKey?: string,
     testnet?: boolean,
@@ -1602,13 +1617,14 @@ function ExchangeConfigModal({
     asterPrivateKey?: string,
     passphrase?: string
   ) => Promise<void>
-  onDelete: (exchangeId: string) => void
+  onDelete: (exchangeId: string, apiKeyName: string) => void
   onClose: () => void
   language: Language
 }) {
   const [selectedExchangeId, setSelectedExchangeId] = useState(
-    editingExchangeId || ''
+    editingExchange?.id || ''
   )
+  const [apiKeyName, setApiKeyName] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [secretKey, setSecretKey] = useState('')
   const [passphrase, setPassphrase] = useState('')
@@ -1635,24 +1651,24 @@ function ExchangeConfigModal({
   )
   
   // 获取用户已配置的交易所数据（用于编辑时回填）
-  const userExchange = userExchanges?.find(
-    (e) => e.id === editingExchangeId
-  )
+  const userExchange = editingExchange
 
   // 如果是编辑现有交易所，初始化表单数据
   useEffect(() => {
-    if (editingExchangeId && userExchange) {
-      setApiKey(userExchange.apiKey || '')
-      setSecretKey(userExchange.secretKey || '')
-      setPassphrase(userExchange.passphrase || '') // 回填 passphrase
-      setTestnet(userExchange.testnet || false)
+    if (editingExchange) {
+      setSelectedExchangeId(editingExchange.id)
+      setApiKeyName(editingExchange.apiKeyName || '')
+      setApiKey(editingExchange.apiKey || '')
+      setSecretKey(editingExchange.secretKey || '')
+      setPassphrase(editingExchange.passphrase || '') // 回填 passphrase
+      setTestnet(editingExchange.testnet || false)
 
       // Aster 字段
-      setAsterUser(userExchange.asterUser || '')
-      setAsterSigner(userExchange.asterSigner || '')
+      setAsterUser(editingExchange.asterUser || '')
+      setAsterSigner(editingExchange.asterSigner || '')
       setAsterPrivateKey('') // Don't load existing private key for security
     }
-  }, [editingExchangeId, userExchange])
+  }, [editingExchange])
 
   // 加载服务器IP（当选择binance时）
   useEffect(() => {
@@ -1686,15 +1702,16 @@ function ExchangeConfigModal({
     // 根据交易所类型验证不同字段
     if (selectedExchange?.id === 'binance') {
       if (!apiKey.trim() || !secretKey.trim()) return
-      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet)
+      await onSave(selectedExchangeId, apiKeyName.trim(), apiKey.trim(), secretKey.trim(), testnet)
     } else if (selectedExchange?.id === 'hyperliquid') {
       if (!apiKey.trim()) return // 只验证私钥，钱包地址自动从私钥生成
-      await onSave(selectedExchangeId, apiKey.trim(), '', testnet, '') // 传空字符串，后端自动生成地址
+      await onSave(selectedExchangeId, apiKeyName.trim(), apiKey.trim(), '', testnet, '') // 传空字符串，后端自动生成地址
     } else if (selectedExchange?.id === 'aster') {
       if (!asterUser.trim() || !asterSigner.trim() || !asterPrivateKey.trim())
         return
       await onSave(
         selectedExchangeId,
+        apiKeyName.trim(),
         '',
         '',
         testnet,
@@ -1707,6 +1724,7 @@ function ExchangeConfigModal({
       if (!apiKey.trim() || !secretKey.trim() || !passphrase.trim()) return
       await onSave(
         selectedExchangeId,
+        apiKeyName.trim(),
         apiKey.trim(),
         secretKey.trim(),
         testnet,
@@ -1719,7 +1737,7 @@ function ExchangeConfigModal({
     } else {
       // 默认情况（其他CEX交易所）
       if (!apiKey.trim() || !secretKey.trim()) return
-      await onSave(selectedExchangeId, apiKey.trim(), secretKey.trim(), testnet)
+      await onSave(selectedExchangeId, apiKeyName.trim(), apiKey.trim(), secretKey.trim(), testnet)
     }
   }
 
@@ -1734,7 +1752,7 @@ function ExchangeConfigModal({
       >
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-bold" style={{ color: '#EAECEF' }}>
-            {editingExchangeId
+            {editingExchange
               ? t('editExchange', language)
               : t('addExchange', language)}
           </h3>
@@ -1753,13 +1771,11 @@ function ExchangeConfigModal({
                 {t('viewGuide', language)}
               </button>
             )}
-            {editingExchangeId && (
+            {editingExchange && userExchange && (
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm(t('confirmDeleteExchange', language))) {
-                    onDelete(editingExchangeId)
-                  }
+                  onDelete(editingExchange.id, userExchange.apiKeyName || '')
                 }}
                 className="p-2 rounded hover:bg-red-100 transition-colors"
                 style={{
@@ -1775,7 +1791,7 @@ function ExchangeConfigModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {!editingExchangeId && (
+          {!editingExchange && (
             <div>
               <label
                 className="block text-sm font-semibold mb-2"
@@ -1797,8 +1813,7 @@ function ExchangeConfigModal({
                 <option value="">{t('pleaseSelectExchange', language)}</option>
                 {availableExchanges.map((exchange) => (
                   <option key={exchange.id} value={exchange.id}>
-                    {getShortName(exchange.name)} ({exchange.type.toUpperCase()}
-                    )
+                    {getShortName(exchange.name)} ({exchange.type.toUpperCase()})
                   </option>
                 ))}
               </select>
@@ -1940,6 +1955,27 @@ function ExchangeConfigModal({
                         className="block text-sm font-semibold mb-2"
                         style={{ color: '#EAECEF' }}
                       >
+                        API密钥名称
+                      </label>
+                      <input
+                        type="text"
+                        value={apiKeyName}
+                        onChange={(e) => setApiKeyName(e.target.value)}
+                        placeholder="例如：主账户、测试账户等"
+                        className="w-full px-3 py-2 rounded"
+                        style={{
+                          background: '#0B0E11',
+                          border: '1px solid #2B3139',
+                          color: '#EAECEF',
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        className="block text-sm font-semibold mb-2"
+                        style={{ color: '#EAECEF' }}
+                      >
                         {t('apiKey', language)}
                       </label>
                       <input
@@ -2068,6 +2104,27 @@ function ExchangeConfigModal({
                       className="block text-sm font-semibold mb-2"
                       style={{ color: '#EAECEF' }}
                     >
+                      API密钥名称
+                    </label>
+                    <input
+                      type="text"
+                      value={apiKeyName}
+                      onChange={(e) => setApiKeyName(e.target.value)}
+                      placeholder="例如：主账户、测试账户等"
+                      className="w-full px-3 py-2 rounded"
+                      style={{
+                        background: '#0B0E11',
+                        border: '1px solid #2B3139',
+                        color: '#EAECEF',
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      className="block text-sm font-semibold mb-2"
+                      style={{ color: '#EAECEF' }}
+                    >
                       {t('privateKey', language)}
                     </label>
                     <input
@@ -2093,6 +2150,27 @@ function ExchangeConfigModal({
               {/* Aster 交易所的字段 */}
               {selectedExchange.id === 'aster' && (
                 <>
+                  <div>
+                    <label
+                      className="block text-sm font-semibold mb-2"
+                      style={{ color: '#EAECEF' }}
+                    >
+                      API密钥名称
+                    </label>
+                    <input
+                      type="text"
+                      value={apiKeyName}
+                      onChange={(e) => setApiKeyName(e.target.value)}
+                      placeholder="例如：主账户、测试账户等"
+                      className="w-full px-3 py-2 rounded"
+                      style={{
+                        background: '#0B0E11',
+                        border: '1px solid #2B3139',
+                        color: '#EAECEF',
+                      }}
+                    />
+                  </div>
+
                   <div>
                     <label
                       className="block text-sm font-semibold mb-2 flex items-center gap-2"

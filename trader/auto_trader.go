@@ -38,7 +38,13 @@ type AutoTraderConfig struct {
 	AsterUser       string // Aster主钱包地址
 	AsterSigner     string // Aster API钱包地址
 	AsterPrivateKey string // Aster API钱包私钥
+	// OKX配置
+	OKXAPIKey     string
+	OKXSecretKey  string
+	OKXPassphrase string
 
+	// 通用测试网配置
+	Testnet bool // 是否使用测试网/模拟盘
 	CoinPoolAPIURL string
 
 	// AI配置
@@ -177,7 +183,7 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 	switch config.Exchange {
 	case "binance":
 		log.Printf("🏦 [%s] 使用币安合约交易", config.Name)
-		trader = NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey, userID)
+		trader = NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey, config.Testnet)
 	case "hyperliquid":
 		log.Printf("🏦 [%s] 使用Hyperliquid交易", config.Name)
 		trader, err = NewHyperliquidTrader(config.HyperliquidPrivateKey, config.HyperliquidWalletAddr, config.HyperliquidTestnet)

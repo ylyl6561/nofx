@@ -231,10 +231,14 @@ export function TraderConfigModal({
 
     setIsSaving(true)
     try {
+      // 从 availableExchanges 中找到选中的交易所，获取其 apiKeyName
+      const selectedExchange = availableExchanges.find(e => e.id === formData.exchange_id)
+      
       const saveData: CreateTraderRequest = {
         name: formData.trader_name,
         ai_model_id: formData.ai_model,
         exchange_id: formData.exchange_id,
+        exchange_api_key_name: selectedExchange?.apiKeyName || '',
         btc_eth_leverage: formData.btc_eth_leverage,
         altcoin_leverage: formData.altcoin_leverage,
         trading_symbols: formData.trading_symbols,
@@ -339,9 +343,8 @@ export function TraderConfigModal({
                   >
                     {availableExchanges.map((exchange) => (
                       <option key={exchange.id} value={exchange.id}>
-                        {getShortName(
-                          exchange.name || exchange.id
-                        ).toUpperCase()}
+                        {getShortName(exchange.name || exchange.id).toUpperCase()}
+                        {exchange.apiKeyName ? ` (${exchange.apiKeyName})` : ''}
                       </option>
                     ))}
                   </select>
