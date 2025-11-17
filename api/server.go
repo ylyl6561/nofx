@@ -106,6 +106,7 @@ func (s *Server) setupRoutes() {
 		// 系统支持的模型和交易所（无需认证，管理员模式和非管理员模式都需要）
 		api.GET("/supported-models", s.handleGetSupportedModels)
 		api.GET("/supported-exchanges", s.handleGetSupportedExchanges)
+		api.GET("/prompt-templates", s.handleGetPromptTemplates)
 
 		// 非管理员模式下的公开认证路由
 		if !auth.IsAdminMode() {
@@ -115,9 +116,7 @@ func (s *Server) setupRoutes() {
 			api.POST("/verify-otp", s.handleVerifyOTP)
 			api.POST("/complete-registration", s.handleCompleteRegistration)
 
-			// 系统提示词模板管理（仅在非管理员模式下公开）
-			// 系统提示词模板管理（无需认证）
-			api.GET("/prompt-templates", s.handleGetPromptTemplates)
+			// 系统提示词模板详情（无需认证）
 			api.GET("/prompt-templates/:name", s.handleGetPromptTemplate)
 
 			// 公开的竞赛数据（无需认证）
