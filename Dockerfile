@@ -15,5 +15,6 @@ FROM alpine:latest
 WORKDIR /app
 COPY --from=backend-builder /src/app /app/app
 COPY --from=backend-builder /src/web/dist /app/web/dist
+COPY --from=backend-builder /src/prompts /app/prompts
 EXPOSE 8080
 CMD ["/app/app"]
