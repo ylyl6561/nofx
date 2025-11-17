@@ -193,19 +193,19 @@ func main() {
 
 	// 只有使用 SQLite 时才同步 config.json 到数据库
 	// PostgreSQL 数据库是共享的，配置已经存在
-	// if !database.IsPostgreSQL() {
+	if !database.IsPostgreSQL() {
 		// 同步config.json到数据库
-	if err := syncConfigToDatabase(database, configFile); err != nil {
-		log.Printf("⚠️  同步config.json到数据库失败: %v", err)
-	}
+		if err := syncConfigToDatabase(database, configFile); err != nil {
+			log.Printf("⚠️  同步config.json到数据库失败: %v", err)
+		}
 
-	// 加载内测码到数据库
-	if err := loadBetaCodesToDatabase(database); err != nil {
-		log.Printf("⚠️  加载内测码到数据库失败: %v", err)
+		// 加载内测码到数据库
+		if err := loadBetaCodesToDatabase(database); err != nil {
+			log.Printf("⚠️  加载内测码到数据库失败: %v", err)
+		}
+	} else {
+		log.Printf("🐘 使用 PostgreSQL，跳过 config.json 同步（配置已存在于共享数据库）")
 	}
-	// } else {
-	// 	log.Printf("🐘 使用 PostgreSQL，跳过 config.json 同步（配置已存在于共享数据库）")
-	// }
 
 	// 获取系统配置
 	useDefaultCoinsStr, _ := database.GetSystemConfig("use_default_coins")

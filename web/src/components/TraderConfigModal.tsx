@@ -14,6 +14,7 @@ interface TraderConfigData {
   trader_name: string
   ai_model: string
   exchange_id: string
+  exchange_api_key_name?: string
   btc_eth_leverage: number
   altcoin_leverage: number
   trading_symbols: string
@@ -51,6 +52,7 @@ export function TraderConfigModal({
     trader_name: '',
     ai_model: '',
     exchange_id: '',
+    exchange_api_key_name: '',
     btc_eth_leverage: 5,
     altcoin_leverage: 3,
     trading_symbols: '',
@@ -83,10 +85,12 @@ export function TraderConfigModal({
         setSelectedCoins(coins)
       }
     } else if (!isEditMode) {
+      const firstExchange = availableExchanges[0]
       setFormData({
         trader_name: '',
         ai_model: availableModels[0]?.id || '',
-        exchange_id: availableExchanges[0]?.id || '',
+        exchange_id: firstExchange?.id || '',
+        exchange_api_key_name: firstExchange?.apiKeyName || '',
         btc_eth_leverage: 5,
         altcoin_leverage: 3,
         trading_symbols: '',
@@ -231,14 +235,11 @@ export function TraderConfigModal({
 
     setIsSaving(true)
     try {
-      // 从 availableExchanges 中找到选中的交易所，获取其 apiKeyName
-      const selectedExchange = availableExchanges.find(e => e.id === formData.exchange_id)
-      
       const saveData: CreateTraderRequest = {
         name: formData.trader_name,
         ai_model_id: formData.ai_model,
         exchange_id: formData.exchange_id,
-        exchange_api_key_name: selectedExchange?.apiKeyName || '',
+        exchange_api_key_name: formData.exchange_api_key_name || '',
         btc_eth_leverage: formData.btc_eth_leverage,
         altcoin_leverage: formData.altcoin_leverage,
         trading_symbols: formData.trading_symbols,
@@ -335,18 +336,33 @@ export function TraderConfigModal({
                     交易所
                   </label>
                   <select
-                    value={formData.exchange_id}
-                    onChange={(e) =>
-                      handleInputChange('exchange_id', e.target.value)
-                    }
+                    value={formData.exchange_api_key_name ? `${formData.exchange_id}_${formData.exchange_api_key_name}` : formData.exchange_id}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      // 解析 exchangeId_apiKeyName 格式
+                      const parts = value.split('_')
+                      const exchangeId = parts[0]
+                      const apiKeyName = parts.slice(1).join('_') || ''
+                      
+                      setFormData(prev => ({
+                        ...prev,
+                        exchange_id: exchangeId,
+                        exchange_api_key_name: apiKeyName
+                      }))
+                    }}
                     className="w-full px-3 py-2 bg-[#0B0E11] border border-[#2B3139] rounded text-[#EAECEF] focus:border-[#F0B90B] focus:outline-none"
                   >
-                    {availableExchanges.map((exchange) => (
-                      <option key={exchange.id} value={exchange.id}>
-                        {getShortName(exchange.name || exchange.id).toUpperCase()}
-                        {exchange.apiKeyName ? ` (${exchange.apiKeyName})` : ''}
-                      </option>
-                    ))}
+                    {availableExchanges.map((exchange) => {
+                      const optionValue = exchange.apiKeyName 
+                        ? `${exchange.id}_${exchange.apiKeyName}`
+                        : exchange.id
+                      return (
+                        <option key={optionValue} value={optionValue}>
+                          {getShortName(exchange.name || exchange.id).toUpperCase()}
+                          {exchange.apiKeyName ? ` (${exchange.apiKeyName})` : ''}
+                        </option>
+                      )
+                    })}
                   </select>
                 </div>
               </div>

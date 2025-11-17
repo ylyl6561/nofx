@@ -109,7 +109,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           api.getSupportedModels(),
           api.getSupportedExchanges(),
         ])
-        setAllModels(modelConfigs)
+        setAllModels(modelConfigs.filter(m => m.enabled))
         setAllExchanges(exchangeConfigs)
         setSupportedModels(supportedModels)
         setSupportedExchanges(supportedExchanges)
@@ -299,8 +299,6 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   }
 
   const handleDeleteModelConfig = async (modelId: string) => {
-    if (!confirm(t('confirmDeleteModel', language))) return
-
     try {
       const updatedModels =
         allModels?.map((m) =>
@@ -330,7 +328,11 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       }
 
       await api.updateModelConfigs(request)
-      setAllModels(updatedModels)
+      
+      // 重新获取模型配置以确保数据同步，并过滤掉禁用的模型
+      const refreshedModels = await api.getModelConfigs()
+      setAllModels(refreshedModels.filter(m => m.enabled))
+      
       setShowModelModal(false)
       setEditingModel(null)
     } catch (error) {
@@ -400,9 +402,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
       await api.updateModelConfigs(request)
 
-      // 重新获取用户配置以确保数据同步
+      // 重新获取用户配置以确保数据同步，并过滤掉禁用的模型
       const refreshedModels = await api.getModelConfigs()
-      setAllModels(refreshedModels)
+      setAllModels(refreshedModels.filter(m => m.enabled))
 
       setShowModelModal(false)
       setEditingModel(null)
@@ -416,33 +418,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     if (!confirm(t('confirmDeleteExchange', language))) return
 
     try {
-      // 从列表中移除该交易所配置
-      const updatedExchanges =
-        allExchanges?.filter((e) => 
-          !(e.id === exchangeId && e.apiKeyName === apiKeyName)
-        ) || []
-
-      const request = {
-        exchanges: Object.fromEntries(
-          updatedExchanges.map((exchange) => [
-            `${exchange.id}_${exchange.apiKeyName || 'default'}`,
-            {
-              enabled: exchange.enabled,
-              api_key_name: exchange.apiKeyName || '',
-              api_key: exchange.apiKey || '',
-              secret_key: exchange.secretKey || '',
-              passphrase: exchange.passphrase || '',
-              testnet: exchange.testnet || false,
-              hyperliquid_wallet_addr: exchange.hyperliquidWalletAddr || '',
-              aster_user: exchange.asterUser || '',
-              aster_signer: exchange.asterSigner || '',
-              aster_private_key: exchange.asterPrivateKey || '',
-            },
-          ])
-        ),
-      }
-
-      await api.updateExchangeConfigs(request)
+      // 使用新的单个删除 API
+      const exchangeKey = `${exchangeId}_${apiKeyName}`
+      await api.deleteExchange(exchangeKey)
       
       // 重新获取配置以确保同步
       const refreshedExchanges = await api.getExchangeConfigs()
@@ -452,7 +430,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       setEditingExchange(null)
     } catch (error) {
       console.error('Failed to delete exchange config:', error)
-      alert(t('deleteExchangeConfigFailed', language))
+      alert(error instanceof Error ? error.message : t('deleteExchangeConfigFailed', language))
     }
   }
 
@@ -469,78 +447,30 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     passphrase?: string
   ) => {
     try {
-      // 找到要配置的交易所（从supportedExchanges中）
-      const exchangeToUpdate = supportedExchanges?.find(
-        (e) => e.id === exchangeId
-      )
-      if (!exchangeToUpdate) {
-        alert(t('exchangeNotExist', language))
-        return
+      const data = {
+        exchange_id: exchangeId,
+        api_key_name: apiKeyName,
+        api_key: apiKey,
+        secret_key: secretKey,
+        passphrase: passphrase,
+        testnet: testnet || false,
+        hyperliquid_wallet_addr: hyperliquidWalletAddr,
+        aster_user: asterUser,
+        aster_signer: asterSigner,
+        aster_private_key: asterPrivateKey,
       }
 
-      // 创建或更新用户的交易所配置
-      const existingExchange = allExchanges?.find((e) => e.id === exchangeId)
-      let updatedExchanges
-
-      if (existingExchange) {
+      if (editingExchange) {
         // 更新现有配置
-        updatedExchanges =
-          allExchanges?.map((e) =>
-            e.id === exchangeId
-              ? {
-                  ...e,
-                  apiKeyName,
-                  apiKey,
-                  secretKey,
-                  passphrase,
-                  testnet,
-                  hyperliquidWalletAddr,
-                  asterUser,
-                  asterSigner,
-                  asterPrivateKey,
-                  enabled: true,
-                }
-              : e
-          ) || []
-      } else {
-        // 添加新配置
-        const newExchange = {
-          ...exchangeToUpdate,
-          apiKeyName,
-          apiKey,
-          secretKey,
-          passphrase,
-          testnet,
-          hyperliquidWalletAddr,
-          asterUser,
-          asterSigner,
-          asterPrivateKey,
+        const exchangeKey = `${exchangeId}_${editingExchange.apiKeyName}`
+        await api.updateSingleExchange(exchangeKey, {
+          ...data,
           enabled: true,
-        }
-        updatedExchanges = [...(allExchanges || []), newExchange]
+        })
+      } else {
+        // 创建新配置
+        await api.createExchange(data)
       }
-
-      const request = {
-        exchanges: Object.fromEntries(
-          updatedExchanges.map((exchange) => [
-            exchange.id,
-            {
-              enabled: exchange.enabled,
-              api_key_name: exchange.apiKeyName || '',
-              api_key: exchange.apiKey || '',
-              secret_key: exchange.secretKey || '',
-              passphrase: exchange.passphrase || '',
-              testnet: exchange.testnet || false,
-              hyperliquid_wallet_addr: exchange.hyperliquidWalletAddr || '',
-              aster_user: exchange.asterUser || '',
-              aster_signer: exchange.asterSigner || '',
-              aster_private_key: exchange.asterPrivateKey || '',
-            },
-          ])
-        ),
-      }
-
-      await api.updateExchangeConfigs(request)
 
       // 重新获取用户配置以确保数据同步
       const refreshedExchanges = await api.getExchangeConfigs()
@@ -550,7 +480,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       setEditingExchange(null)
     } catch (error) {
       console.error('Failed to save exchange config:', error)
-      alert(t('saveConfigFailed', language))
+      alert(error instanceof Error ? error.message : t('saveConfigFailed', language))
     }
   }
 

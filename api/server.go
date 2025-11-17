@@ -182,7 +182,10 @@ func (s *Server) setupRoutes() {
 
 			// 交易所配置
 			protected.GET("/exchanges", s.handleGetExchangeConfigs)
-			protected.PUT("/exchanges", s.handleUpdateExchangeConfigs)
+			protected.PUT("/exchanges", s.handleUpdateExchangeConfigs) // 批量更新（保留兼容性）
+			protected.POST("/exchanges", s.handleCreateExchange)       // 创建单个交易所
+			protected.PUT("/exchanges/:id", s.handleUpdateSingleExchange) // 更新单个交易所
+			protected.DELETE("/exchanges/:id", s.handleDeleteExchange)    // 删除单个交易所
 
 			// 用户信号源配置
 			protected.GET("/user/signal-sources", s.handleGetUserSignalSource)
@@ -410,6 +413,7 @@ type CreateTraderRequest struct {
 	Name                 string  `json:"name" binding:"required"`
 	AIModelID            string  `json:"ai_model_id" binding:"required"`
 	ExchangeID           string  `json:"exchange_id" binding:"required"`
+	ExchangeAPIKeyName   string  `json:"exchange_api_key_name"`
 	InitialBalance       float64 `json:"initial_balance"`
 	ScanIntervalMinutes  int     `json:"scan_interval_minutes"`
 	BTCETHLeverage       int     `json:"btc_eth_leverage"`
@@ -626,6 +630,7 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		Name:                 req.Name,
 		AIModelID:            req.AIModelID,
 		ExchangeID:           req.ExchangeID,
+		ExchangeAPIKeyName:   req.ExchangeAPIKeyName,
 		InitialBalance:       actualBalance, // 使用实际查询的余额
 		BTCETHLeverage:       btcEthLeverage,
 		AltcoinLeverage:      altcoinLeverage,
@@ -666,18 +671,19 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 
 // UpdateTraderRequest 更新交易员请求
 type UpdateTraderRequest struct {
-	Name                string  `json:"name" binding:"required"`
-	AIModelID           string  `json:"ai_model_id" binding:"required"`
-	ExchangeID          string  `json:"exchange_id" binding:"required"`
-	InitialBalance      float64 `json:"initial_balance"`
-	ScanIntervalMinutes int     `json:"scan_interval_minutes"`
-	BTCETHLeverage      int     `json:"btc_eth_leverage"`
-	AltcoinLeverage     int     `json:"altcoin_leverage"`
-	TradingSymbols      string  `json:"trading_symbols"`
-	CustomPrompt        string  `json:"custom_prompt"`
-	OverrideBasePrompt  bool    `json:"override_base_prompt"`
+	Name                 string  `json:"name" binding:"required"`
+	AIModelID            string  `json:"ai_model_id" binding:"required"`
+	ExchangeID           string  `json:"exchange_id" binding:"required"`
+	ExchangeAPIKeyName   string  `json:"exchange_api_key_name"`
+	InitialBalance       float64 `json:"initial_balance"`
+	ScanIntervalMinutes  int     `json:"scan_interval_minutes"`
+	BTCETHLeverage       int     `json:"btc_eth_leverage"`
+	AltcoinLeverage      int     `json:"altcoin_leverage"`
+	TradingSymbols       string  `json:"trading_symbols"`
+	CustomPrompt         string  `json:"custom_prompt"`
+	OverrideBasePrompt   bool    `json:"override_base_prompt"`
 	SystemPromptTemplate string  `json:"system_prompt_template"`
-	IsCrossMargin       *bool   `json:"is_cross_margin"`
+	IsCrossMargin        *bool   `json:"is_cross_margin"`
 }
 
 // handleUpdateTrader 更新交易员配置
@@ -748,6 +754,7 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		Name:                 req.Name,
 		AIModelID:            req.AIModelID,
 		ExchangeID:           req.ExchangeID,
+		ExchangeAPIKeyName:   req.ExchangeAPIKeyName,
 		InitialBalance:       req.InitialBalance,
 		BTCETHLeverage:       btcEthLeverage,
 		AltcoinLeverage:      altcoinLeverage,
@@ -788,13 +795,6 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 	userID := c.GetString("user_id")
 	traderID := c.Param("id")
 
-	// 从数据库删除
-	err := s.database.DeleteTrader(userID, traderID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除交易员失败: %v", err)})
-		return
-	}
-
 	// 如果交易员正在运行，先停止它
 	if trader, err := s.traderManager.GetTrader(traderID); err == nil {
 		status := trader.GetStatus()
@@ -802,6 +802,17 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 			trader.Stop()
 			log.Printf("⏹  已停止运行中的交易员: %s", traderID)
 		}
+	}
+
+	// 从内存中移除交易员实例
+	s.traderManager.RemoveTrader(traderID)
+	log.Printf("🗑️  已从内存中移除交易员: %s", traderID)
+
+	// 从数据库删除
+	err := s.database.DeleteTrader(userID, traderID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除交易员失败: %v", err)})
+		return
 	}
 
 	log.Printf("✓ 交易员已删除: %s", traderID)
@@ -1101,7 +1112,7 @@ func (s *Server) handleGetExchangeConfigs(c *gin.Context) {
 	c.JSON(http.StatusOK, exchanges)
 }
 
-// handleUpdateExchangeConfigs 更新交易所配置
+// handleUpdateExchangeConfigs 批量更新交易所配置（保留兼容性）
 func (s *Server) handleUpdateExchangeConfigs(c *gin.Context) {
 	userID := c.GetString("user_id")
 	var req UpdateExchangeConfigRequest
@@ -1128,6 +1139,161 @@ func (s *Server) handleUpdateExchangeConfigs(c *gin.Context) {
 
 	log.Printf("✓ 交易所配置已更新: %+v", req.Exchanges)
 	c.JSON(http.StatusOK, gin.H{"message": "交易所配置已更新"})
+}
+
+// handleCreateExchange 创建单个交易所配置
+func (s *Server) handleCreateExchange(c *gin.Context) {
+	userID := c.GetString("user_id")
+	
+	var req struct {
+		ExchangeID            string `json:"exchange_id" binding:"required"`
+		APIKeyName            string `json:"api_key_name" binding:"required"`
+		APIKey                string `json:"api_key" binding:"required"`
+		SecretKey             string `json:"secret_key"`
+		Passphrase            string `json:"passphrase"`
+		Testnet               bool   `json:"testnet"`
+		HyperliquidWalletAddr string `json:"hyperliquid_wallet_addr"`
+		AsterUser             string `json:"aster_user"`
+		AsterSigner           string `json:"aster_signer"`
+		AsterPrivateKey       string `json:"aster_private_key"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 创建交易所配置
+	err := s.database.UpdateExchange(
+		userID, 
+		req.ExchangeID, 
+		true, // 默认启用
+		req.APIKeyName,
+		req.APIKey, 
+		req.SecretKey, 
+		req.Passphrase, 
+		req.Testnet, 
+		req.HyperliquidWalletAddr, 
+		req.AsterUser, 
+		req.AsterSigner, 
+		req.AsterPrivateKey,
+	)
+	
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("创建交易所配置失败: %v", err)})
+		return
+	}
+
+	// 重新加载该用户的所有交易员
+	if err := s.traderManager.LoadUserTraders(s.database, userID); err != nil {
+		log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+	}
+
+	log.Printf("✓ 创建交易所配置成功: %s (API Key Name: %s)", req.ExchangeID, req.APIKeyName)
+	c.JSON(http.StatusCreated, gin.H{"message": "交易所配置已创建"})
+}
+
+// handleUpdateSingleExchange 更新单个交易所配置
+func (s *Server) handleUpdateSingleExchange(c *gin.Context) {
+	userID := c.GetString("user_id")
+	exchangeKey := c.Param("id") // 格式: exchangeID_apiKeyName
+	
+	var req struct {
+		APIKeyName            string `json:"api_key_name" binding:"required"`
+		APIKey                string `json:"api_key" binding:"required"`
+		SecretKey             string `json:"secret_key"`
+		Passphrase            string `json:"passphrase"`
+		Testnet               bool   `json:"testnet"`
+		Enabled               bool   `json:"enabled"`
+		HyperliquidWalletAddr string `json:"hyperliquid_wallet_addr"`
+		AsterUser             string `json:"aster_user"`
+		AsterSigner           string `json:"aster_signer"`
+		AsterPrivateKey       string `json:"aster_private_key"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 从 exchangeKey 解析出 exchangeID
+	// 格式: binance_主账户 -> exchangeID=binance, apiKeyName=主账户
+	parts := strings.SplitN(exchangeKey, "_", 2)
+	if len(parts) != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的交易所ID格式"})
+		return
+	}
+	exchangeID := parts[0]
+
+	// 更新交易所配置
+	err := s.database.UpdateExchange(
+		userID,
+		exchangeID,
+		req.Enabled,
+		req.APIKeyName,
+		req.APIKey,
+		req.SecretKey,
+		req.Passphrase,
+		req.Testnet,
+		req.HyperliquidWalletAddr,
+		req.AsterUser,
+		req.AsterSigner,
+		req.AsterPrivateKey,
+	)
+	
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新交易所配置失败: %v", err)})
+		return
+	}
+
+	// 重新加载该用户的所有交易员
+	if err := s.traderManager.LoadUserTraders(s.database, userID); err != nil {
+		log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+	}
+
+	log.Printf("✓ 更新交易所配置成功: %s (API Key Name: %s)", exchangeID, req.APIKeyName)
+	c.JSON(http.StatusOK, gin.H{"message": "交易所配置已更新"})
+}
+
+// handleDeleteExchange 删除单个交易所配置
+func (s *Server) handleDeleteExchange(c *gin.Context) {
+	userID := c.GetString("user_id")
+	exchangeKey := c.Param("id") // 格式: exchangeID_apiKeyName
+	
+	// 从 exchangeKey 解析出 exchangeID 和 apiKeyName
+	parts := strings.SplitN(exchangeKey, "_", 2)
+	if len(parts) != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的交易所ID格式"})
+		return
+	}
+	exchangeID := parts[0]
+	apiKeyName := parts[1]
+
+	// 检查是否有正在运行的交易员使用此交易所
+	traders, err := s.database.GetTraders(userID)
+	if err == nil {
+		for _, trader := range traders {
+			if trader.ExchangeID == exchangeID && trader.ExchangeAPIKeyName == apiKeyName && trader.IsRunning {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "无法删除：有正在运行的交易员正在使用此交易所配置"})
+				return
+			}
+		}
+	}
+
+	// 删除交易所配置
+	err = s.database.DeleteExchange(userID, exchangeID, apiKeyName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除交易所配置失败: %v", err)})
+		return
+	}
+
+	// 重新加载该用户的所有交易员
+	if err := s.traderManager.LoadUserTraders(s.database, userID); err != nil {
+		log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+	}
+
+	log.Printf("✓ 删除交易所配置成功: %s (API Key Name: %s)", exchangeID, apiKeyName)
+	c.JSON(http.StatusOK, gin.H{"message": "交易所配置已删除"})
 }
 
 // handleGetUserSignalSource 获取用户信号源配置
@@ -1237,22 +1403,23 @@ func (s *Server) handleGetTraderConfig(c *gin.Context) {
 	aiModelID := traderConfig.AIModelID
 
 	result := map[string]interface{}{
-		"trader_id":             traderConfig.ID,
-		"trader_name":           traderConfig.Name,
-		"ai_model":              aiModelID,
-		"exchange_id":           traderConfig.ExchangeID,
-		"initial_balance":       traderConfig.InitialBalance,
-		"scan_interval_minutes": traderConfig.ScanIntervalMinutes,
-		"btc_eth_leverage":      traderConfig.BTCETHLeverage,
-		"altcoin_leverage":      traderConfig.AltcoinLeverage,
-		"trading_symbols":       traderConfig.TradingSymbols,
-		"custom_prompt":         traderConfig.CustomPrompt,
-		"override_base_prompt":  traderConfig.OverrideBasePrompt,
+		"trader_id":              traderConfig.ID,
+		"trader_name":            traderConfig.Name,
+		"ai_model":               aiModelID,
+		"exchange_id":            traderConfig.ExchangeID,
+		"exchange_api_key_name":  traderConfig.ExchangeAPIKeyName,
+		"initial_balance":        traderConfig.InitialBalance,
+		"scan_interval_minutes":  traderConfig.ScanIntervalMinutes,
+		"btc_eth_leverage":       traderConfig.BTCETHLeverage,
+		"altcoin_leverage":       traderConfig.AltcoinLeverage,
+		"trading_symbols":        traderConfig.TradingSymbols,
+		"custom_prompt":          traderConfig.CustomPrompt,
+		"override_base_prompt":   traderConfig.OverrideBasePrompt,
 		"system_prompt_template": traderConfig.SystemPromptTemplate,
-		"is_cross_margin":       traderConfig.IsCrossMargin,
-		"use_coin_pool":         traderConfig.UseCoinPool,
-		"use_oi_top":            traderConfig.UseOITop,
-		"is_running":            isRunning,
+		"is_cross_margin":        traderConfig.IsCrossMargin,
+		"use_coin_pool":          traderConfig.UseCoinPool,
+		"use_oi_top":             traderConfig.UseOITop,
+		"is_running":             isRunning,
 	}
 
 	c.JSON(http.StatusOK, result)

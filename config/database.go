@@ -773,6 +773,32 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKeyName, a
 	return nil
 }
 
+// DeleteExchange 删除交易所配置
+func (d *Database) DeleteExchange(userID, exchangeID, apiKeyName string) error {
+	log.Printf("🗑️  DeleteExchange: userID=%s, exchangeID=%s, apiKeyName=%s", userID, exchangeID, apiKeyName)
+	
+	query := `DELETE FROM exchanges WHERE id = ? AND user_id = ? AND api_key_name = ?`
+	result, err := d.db.Exec(d.convertQuery(query), exchangeID, userID, apiKeyName)
+	if err != nil {
+		log.Printf("❌ DeleteExchange: 删除失败: %v", err)
+		return err
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("❌ DeleteExchange: 获取影响行数失败: %v", err)
+		return err
+	}
+	
+	if rowsAffected == 0 {
+		log.Printf("⚠️  DeleteExchange: 未找到要删除的记录")
+		return fmt.Errorf("交易所配置不存在")
+	}
+	
+	log.Printf("✅ DeleteExchange: 删除成功，影响行数 = %d", rowsAffected)
+	return nil
+}
+
 // CreateAIModel 创建AI模型配置
 func (d *Database) CreateAIModel(userID, id, name, provider string, enabled bool, apiKey, customAPIURL string) error {
 	if d.isPostgreSQL() {
@@ -936,11 +962,18 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 		FROM traders t
 		JOIN ai_models a ON t.ai_model_id = a.id AND t.user_id = a.user_id
 		LEFT JOIN exchanges e ON t.exchange_id = e.id AND t.user_id = e.user_id 
-			AND (COALESCE(t.exchange_api_key_name, '') = COALESCE(e.api_key_name, '') 
-			     OR (COALESCE(t.exchange_api_key_name, '') = '' AND e.api_key_name IS NULL)
-			     OR (COALESCE(t.exchange_api_key_name, '') = '' AND COALESCE(e.api_key_name, '') = ''))
+			AND (
+				-- 精确匹配 api_key_name
+				(COALESCE(t.exchange_api_key_name, '') != '' AND COALESCE(t.exchange_api_key_name, '') = COALESCE(e.api_key_name, ''))
+				-- 或者 trader 的 api_key_name 为空时，匹配任意启用的交易所
+				OR (COALESCE(t.exchange_api_key_name, '') = '' AND e.enabled = true)
+			)
 		WHERE t.id = ? AND t.user_id = ?
-		ORDER BY e.created_at DESC
+		ORDER BY 
+			-- 优先选择启用的交易所
+			CASE WHEN e.enabled = true THEN 0 ELSE 1 END,
+			-- 然后按创建时间倒序
+			e.created_at DESC
 		LIMIT 1`
 	
 	err := d.db.QueryRow(d.convertQuery(query), traderID, userID).Scan(

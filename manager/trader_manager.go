@@ -840,17 +840,32 @@ func (tm *TraderManager) LoadUserTraders(database *config.Database, userID strin
 			continue
 		}
 
-		// 从已查询的列表中查找交易所配置（需要同时匹配 ID 和 API Key Name）
+		// 从已查询的列表中查找交易所配置
 		var exchangeCfg *config.ExchangeConfig
 		for _, exchange := range exchanges {
-			if exchange.ID == traderCfg.ExchangeID && exchange.APIKeyName == traderCfg.ExchangeAPIKeyName {
-				exchangeCfg = exchange
-				break
+			if exchange.ID == traderCfg.ExchangeID {
+				// 如果交易员指定了 API Key Name，精确匹配
+				if traderCfg.ExchangeAPIKeyName != "" {
+					if exchange.APIKeyName == traderCfg.ExchangeAPIKeyName && exchange.Enabled {
+						exchangeCfg = exchange
+						break
+					}
+				} else {
+					// 如果交易员没有指定 API Key Name，使用第一个启用的配置
+					if exchange.Enabled {
+						exchangeCfg = exchange
+						break
+					}
+				}
 			}
 		}
 
 		if exchangeCfg == nil {
-			log.Printf("⚠️ 交易员 %s 的交易所 %s (API Key: %s) 不存在，跳过", traderCfg.Name, traderCfg.ExchangeID, traderCfg.ExchangeAPIKeyName)
+			if traderCfg.ExchangeAPIKeyName != "" {
+				log.Printf("⚠️ 交易员 %s 的交易所 %s (API Key: %s) 不存在或未启用，跳过", traderCfg.Name, traderCfg.ExchangeID, traderCfg.ExchangeAPIKeyName)
+			} else {
+				log.Printf("⚠️ 交易员 %s 的交易所 %s 没有启用的配置，跳过", traderCfg.Name, traderCfg.ExchangeID)
+			}
 			continue
 		}
 

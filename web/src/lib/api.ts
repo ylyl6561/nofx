@@ -165,6 +165,63 @@ export const api = {
     if (!res.ok) throw new Error('更新交易所配置失败')
   },
 
+  // 创建单个交易所配置
+  async createExchange(data: {
+    exchange_id: string
+    api_key_name: string
+    api_key: string
+    secret_key?: string
+    passphrase?: string
+    testnet?: boolean
+    hyperliquid_wallet_addr?: string
+    aster_user?: string
+    aster_signer?: string
+    aster_private_key?: string
+  }): Promise<void> {
+    const res = await fetch(`${API_BASE}/exchanges`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error('创建交易所配置失败')
+  },
+
+  // 更新单个交易所配置
+  async updateSingleExchange(
+    exchangeKey: string,
+    data: {
+      api_key_name: string
+      api_key: string
+      secret_key?: string
+      passphrase?: string
+      testnet?: boolean
+      enabled?: boolean
+      hyperliquid_wallet_addr?: string
+      aster_user?: string
+      aster_signer?: string
+      aster_private_key?: string
+    }
+  ): Promise<void> {
+    const res = await fetch(`${API_BASE}/exchanges/${exchangeKey}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) throw new Error('更新交易所配置失败')
+  },
+
+  // 删除单个交易所配置
+  async deleteExchange(exchangeKey: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/exchanges/${exchangeKey}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+    if (!res.ok) {
+      const error = await res.json()
+      throw new Error(error.error || '删除交易所配置失败')
+    }
+  },
+
   // 获取系统状态（支持trader_id）
   async getStatus(traderId?: string): Promise<SystemStatus> {
     const url = traderId
