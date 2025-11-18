@@ -211,6 +211,10 @@ export function TraderConfigViewModal({
             </div>
             <div className="space-y-3">
               <InfoRow
+                label="系统提示词模板"
+                value={traderData.system_prompt_template || 'default'}
+              />
+              <InfoRow
                 label="覆盖默认提示词"
                 value={traderData.override_base_prompt}
               />
@@ -238,7 +242,7 @@ export function TraderConfigViewModal({
                   className="text-sm text-[#848E9C] italic p-3 rounded border"
                   style={{ border: '1px solid #2B3139' }}
                 >
-                  未设置自定义提示词，使用系统默认策略
+                  未设置附加提示词
                 </div>
               )}
             </div>

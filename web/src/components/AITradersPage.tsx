@@ -109,7 +109,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           api.getSupportedModels(),
           api.getSupportedExchanges(),
         ])
-        setAllModels(modelConfigs.filter(m => m.enabled))
+        setAllModels(modelConfigs.filter((m) => m.enabled))
         setAllExchanges(exchangeConfigs)
         setSupportedModels(supportedModels)
         setSupportedExchanges(supportedExchanges)

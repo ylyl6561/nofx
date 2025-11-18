@@ -155,6 +155,67 @@ func NewDatabase(dbPath string) (*Database, error) {
 
 // initDefaultData 初始化默认数据
 func (d *Database) initDefaultData() error {
+	// 初始化系统级 AI 模型模板
+	systemAIModels := []struct {
+		id, name, provider, description, defaultModelName, defaultAPIURL string
+	}{
+		{"deepseek", "DeepSeek", "deepseek", "DeepSeek AI 模型，性价比高", "deepseek-chat", "https://api.deepseek.com/v1"},
+		{"qwen", "Qwen (通义千问)", "qwen", "阿里云通义千问模型", "qwen-plus", "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+	}
+
+	for _, model := range systemAIModels {
+		if d.isPostgreSQL() {
+			_, err := d.db.Exec(`
+				INSERT INTO system_ai_models (id, name, provider, description, default_model_name, default_api_url) 
+				VALUES ($1, $2, $3, $4, $5, $6)
+				ON CONFLICT (id) DO NOTHING
+			`, model.id, model.name, model.provider, model.description, model.defaultModelName, model.defaultAPIURL)
+			if err != nil {
+				return fmt.Errorf("初始化系统 AI 模型模板失败: %w", err)
+			}
+		} else {
+			_, err := d.db.Exec(`
+				INSERT OR IGNORE INTO system_ai_models (id, name, provider, description, default_model_name, default_api_url) 
+				VALUES (?, ?, ?, ?, ?, ?)
+			`, model.id, model.name, model.provider, model.description, model.defaultModelName, model.defaultAPIURL)
+			if err != nil {
+				return fmt.Errorf("初始化系统 AI 模型模板失败: %w", err)
+			}
+		}
+	}
+
+	// 初始化系统级交易所模板
+	systemExchanges := []struct {
+		id, name, typ, description string
+		supportsTestnet            bool
+	}{
+		{"binance", "Binance Futures", "cex", "币安合约交易所", true},
+		{"okx", "OKX", "cex", "OKX 交易所", true},
+		{"hyperliquid", "Hyperliquid", "dex", "Hyperliquid 去中心化交易所", true},
+		{"aster", "Aster", "dex", "Aster 去中心化交易所", false},
+	}
+
+	for _, exchange := range systemExchanges {
+		if d.isPostgreSQL() {
+			_, err := d.db.Exec(`
+				INSERT INTO system_exchanges (id, name, type, description, supports_testnet) 
+				VALUES ($1, $2, $3, $4, $5)
+				ON CONFLICT (id) DO NOTHING
+			`, exchange.id, exchange.name, exchange.typ, exchange.description, exchange.supportsTestnet)
+			if err != nil {
+				return fmt.Errorf("初始化系统交易所模板失败: %w", err)
+			}
+		} else {
+			_, err := d.db.Exec(`
+				INSERT OR IGNORE INTO system_exchanges (id, name, type, description, supports_testnet) 
+				VALUES (?, ?, ?, ?, ?)
+			`, exchange.id, exchange.name, exchange.typ, exchange.description, exchange.supportsTestnet)
+			if err != nil {
+				return fmt.Errorf("初始化系统交易所模板失败: %w", err)
+			}
+		}
+	}
+
 	// 初始化AI模型（使用default用户）
 	aiModels := []struct {
 		id, name, provider string

@@ -107,7 +107,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/supported-models", s.handleGetSupportedModels)
 		api.GET("/supported-exchanges", s.handleGetSupportedExchanges)
 		api.GET("/prompt-templates", s.handleGetPromptTemplates)
-
+		
 		// 非管理员模式下的公开认证路由
 		if !auth.IsAdminMode() {
 			// 认证相关路由（无需认证）
@@ -1900,6 +1900,46 @@ func (s *Server) handleRegister(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建用户失败: " + err.Error()})
 		return
 	}
+
+	// 为新用户初始化默认的 AI 模型配置
+	log.Printf("🤖 为新用户初始化默认 AI 模型配置...")
+	defaultModels := []struct {
+		id, name, provider string
+	}{
+		{"deepseek", "DeepSeek", "deepseek"},
+		{"qwen", "Qwen", "qwen"},
+	}
+	
+	for _, model := range defaultModels {
+		err := s.database.UpdateAIModel(userID, model.id, false, "", "", "")
+		if err != nil {
+			log.Printf("⚠️ 初始化模型 %s 失败: %v", model.name, err)
+		} else {
+			log.Printf("  ✓ 初始化模型: %s", model.name)
+		}
+	}
+
+	// 为新用户初始化默认的交易所配置
+	log.Printf("🏦 为新用户初始化默认交易所配置...")
+	defaultExchanges := []struct {
+		id, name, typ string
+	}{
+		{"binance", "Binance Futures", "cex"},
+		{"okx", "OKX", "cex"},
+		{"hyperliquid", "Hyperliquid", "dex"},
+		{"aster", "Aster", "dex"},
+	}
+	
+	for _, exchange := range defaultExchanges {
+		err := s.database.UpdateExchange(userID, exchange.id, false, "默认", "", "", "", false, "", "", "", "")
+		if err != nil {
+			log.Printf("⚠️ 初始化交易所 %s 失败: %v", exchange.name, err)
+		} else {
+			log.Printf("  ✓ 初始化交易所: %s", exchange.name)
+		}
+	}
+
+	log.Printf("✓ 用户 %s 注册成功", req.Email)
 
 	// 如果是内测模式，标记内测码为已使用
 	betaModeStr2, _ := s.database.GetSystemConfig("beta_mode")

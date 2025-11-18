@@ -11,6 +11,27 @@ func (d *Database) createTables() error {
 	if d.isPostgreSQL() {
 		// PostgreSQL 表结构
 		queries = []string{
+			// 系统级 AI 模型模板表（所有用户共享）
+			`CREATE TABLE IF NOT EXISTS system_ai_models (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				provider TEXT NOT NULL,
+				description TEXT DEFAULT '',
+				default_model_name TEXT DEFAULT '',
+				default_api_url TEXT DEFAULT '',
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)`,
+			
+			// 系统级交易所模板表（所有用户共享）
+			`CREATE TABLE IF NOT EXISTS system_exchanges (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				type TEXT NOT NULL,
+				description TEXT DEFAULT '',
+				supports_testnet BOOLEAN DEFAULT false,
+				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			)`,
+			
 			// AI模型配置表
 			`CREATE TABLE IF NOT EXISTS ai_models (
 				id TEXT NOT NULL,
@@ -142,6 +163,27 @@ func (d *Database) createTables() error {
 	} else {
 		// SQLite 表结构
 		queries = []string{
+			// 系统级 AI 模型模板表（所有用户共享）
+			`CREATE TABLE IF NOT EXISTS system_ai_models (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				provider TEXT NOT NULL,
+				description TEXT DEFAULT '',
+				default_model_name TEXT DEFAULT '',
+				default_api_url TEXT DEFAULT '',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			)`,
+			
+			// 系统级交易所模板表（所有用户共享）
+			`CREATE TABLE IF NOT EXISTS system_exchanges (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				type TEXT NOT NULL,
+				description TEXT DEFAULT '',
+				supports_testnet BOOLEAN DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			)`,
+			
 			// AI模型配置表
 			`CREATE TABLE IF NOT EXISTS ai_models (
 				id TEXT NOT NULL,
