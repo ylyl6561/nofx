@@ -13,6 +13,7 @@ import (
 	"nofx/decision"
 	"nofx/manager"
 	"nofx/trader"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -73,6 +74,7 @@ func (s *Server) setupRoutes() {
 	// 导入handlers
 	apiKeyHandlers := handlers.NewAPIKeyHandlers(s.database)
 	tradingAPIHandlers := handlers.NewTradingAPIHandlers(s.database, s.traderManager)
+	userConfigHandlers := handlers.NewUserConfigHandlers(s.database)
 
 	// 静态文件服务（前端）
 	s.router.Static("/assets", "./web/dist/assets")
@@ -91,12 +93,19 @@ func (s *Server) setupRoutes() {
 		c.File("./web/dist/index.html")
 	})
 
+	// 公开路由（不需要认证）
+	public := s.router.Group("/api")
+	{
+		public.GET("/health", s.handleHealth)
+		public.GET("/system/config", s.handleGetSystemConfig)
+		public.GET("/system/ip", s.handleGetServerIP)
+		public.GET("/system/ai-models", s.handleGetSystemAIModels)
+		public.GET("/system/exchanges", s.handleGetSystemExchanges)
+	}
+
 	// API路由组
 	api := s.router.Group("/api")
 	{
-		// 健康检查
-		api.Any("/health", s.handleHealth)
-
 		// 管理员登录（管理员模式下使用，公共）
 		api.POST("/admin-login", s.handleAdminLogin)
 
@@ -178,6 +187,7 @@ func (s *Server) setupRoutes() {
 			// AI模型配置
 			protected.GET("/models", s.handleGetModelConfigs)
 			protected.PUT("/models", s.handleUpdateModelConfigs)
+			protected.DELETE("/models/:id", s.handleDeleteModel) // 删除单个AI模型
 
 			// 交易所配置
 			protected.GET("/exchanges", s.handleGetExchangeConfigs)
@@ -189,6 +199,19 @@ func (s *Server) setupRoutes() {
 			// 用户信号源配置
 			protected.GET("/user/signal-sources", s.handleGetUserSignalSource)
 			protected.POST("/user/signal-sources", s.handleSaveUserSignalSource)
+			
+			// 用户交易配置
+			protected.GET("/user/trading-config", userConfigHandlers.GetUserTradingConfig)
+			protected.PUT("/user/trading-config", userConfigHandlers.SaveUserTradingConfig)
+			protected.DELETE("/user/trading-config", userConfigHandlers.DeleteUserTradingConfig)
+			
+			// 决策日志
+			protected.GET("/traders/:id/decision-logs", userConfigHandlers.GetDecisionLogs)
+			protected.GET("/traders/:id/decision-logs/statistics", userConfigHandlers.GetDecisionLogStatistics)
+			
+			// 权益历史
+			protected.GET("/traders/:id/equity-history", userConfigHandlers.GetEquityHistory)
+			protected.POST("/equity-history/batch", userConfigHandlers.GetEquityHistoryBatch)
 
 			// 指定trader的数据（使用query参数 ?trader_id=xxx）
 			protected.GET("/status", s.handleStatus)
@@ -242,7 +265,6 @@ func (s *Server) handleGetSystemConfig(c *gin.Context) {
 	betaMode := betaModeStr == "true"
 
 	c.JSON(http.StatusOK, gin.H{
-		"admin_mode":       auth.IsAdminMode(),
 		"beta_mode":        betaMode,
 		"default_coins":    defaultCoins,
 		"btc_eth_leverage": btcEthLeverage,
@@ -1096,6 +1118,38 @@ func (s *Server) handleUpdateModelConfigs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "模型配置已更新"})
 }
 
+// handleDeleteModel 删除单个AI模型配置
+func (s *Server) handleDeleteModel(c *gin.Context) {
+	userID := c.GetString("user_id")
+	modelID := c.Param("id")
+
+	// 检查是否有正在运行的交易员使用此AI模型
+	traders, err := s.database.GetTraders(userID)
+	if err == nil {
+		for _, trader := range traders {
+			if trader.AIModelID == modelID && trader.IsRunning {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "无法删除：有正在运行的交易员正在使用此AI模型"})
+				return
+			}
+		}
+	}
+
+	// 删除AI模型配置
+	err = s.database.DeleteAIModel(userID, modelID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除AI模型失败: %v", err)})
+		return
+	}
+
+	// 重新加载该用户的所有交易员
+	if err := s.traderManager.LoadUserTraders(s.database, userID); err != nil {
+		log.Printf("⚠️ 重新加载用户交易员到内存失败: %v", err)
+	}
+
+	log.Printf("✓ 删除AI模型配置成功: %s", modelID)
+	c.JSON(http.StatusOK, gin.H{"message": "AI模型配置已删除"})
+}
+
 // handleGetExchangeConfigs 获取交易所配置
 func (s *Server) handleGetExchangeConfigs(c *gin.Context) {
 	userID := c.GetString("user_id")
@@ -1719,6 +1773,29 @@ func (s *Server) handlePerformance(c *gin.Context) {
 // authMiddleware JWT认证中间件
 func (s *Server) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 本地开发环境：检查是否跳过认证
+		env := os.Getenv("APP_ENV")
+		skipAuth := os.Getenv("SKIP_AUTH")
+		
+		if (env == "local" || env == "development") && skipAuth == "true" {
+			// 本地开发模式，使用测试用户
+			testUserID := os.Getenv("TEST_USER_ID")
+			if testUserID == "" {
+				testUserID = "test-user-local" // 默认测试用户ID
+			}
+			testEmail := os.Getenv("TEST_USER_EMAIL")
+			if testEmail == "" {
+				testEmail = "test@local.dev"
+			}
+			
+			log.Printf("🔓 [本地开发] 跳过认证，使用测试用户: %s (%s)", testEmail, testUserID)
+			c.Set("user_id", testUserID)
+			c.Set("email", testEmail)
+			c.Next()
+			return
+		}
+		
+		// 生产环境或未设置跳过认证：正常JWT验证
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少Authorization头"})
@@ -2042,6 +2119,30 @@ func (s *Server) handleLogin(c *gin.Context) {
 		return
 	}
 
+	// 本地开发环境：跳过OTP验证
+	env := os.Getenv("APP_ENV")
+	skipOTP := os.Getenv("SKIP_OTP")
+	
+	if (env == "local" || env == "development") && skipOTP == "true" {
+		// 本地环境直接生成JWT token，跳过OTP
+		log.Printf("🔓 [本地开发] 跳过OTP验证，直接登录: %s", user.Email)
+		
+		token, err := auth.GenerateJWT(user.ID, user.Email)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "生成token失败"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"token":   token,
+			"user_id": user.ID,
+			"email":   user.Email,
+			"message": "登录成功（本地开发模式，已跳过OTP）",
+		})
+		return
+	}
+
+	// 生产环境：正常OTP流程
 	// 检查OTP是否已验证
 	if !user.OTPVerified {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -2451,4 +2552,72 @@ func (s *Server) handleGetPublicTraderConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// handleGetSystemAIModels 获取系统级AI模型模板列表（公开接口）
+func (s *Server) handleGetSystemAIModels(c *gin.Context) {
+	// 查询系统级AI模型模板
+	query := `SELECT id, name, provider, description, default_model_name, default_api_url 
+	          FROM system_ai_models 
+	          ORDER BY id`
+	
+	rows, err := s.database.Query(query)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "查询系统AI模型失败: "+err.Error())
+		return
+	}
+	defer rows.Close()
+	
+	var models []map[string]interface{}
+	for rows.Next() {
+		var id, name, provider, description, defaultModelName, defaultAPIURL string
+		if err := rows.Scan(&id, &name, &provider, &description, &defaultModelName, &defaultAPIURL); err != nil {
+			continue
+		}
+		
+		models = append(models, map[string]interface{}{
+			"id":                 id,
+			"name":               name,
+			"provider":           provider,
+			"description":        description,
+			"default_model_name": defaultModelName,
+			"default_api_url":    defaultAPIURL,
+		})
+	}
+	
+	SuccessResponse(c, models)
+}
+
+// handleGetSystemExchanges 获取系统级交易所模板列表（公开接口）
+func (s *Server) handleGetSystemExchanges(c *gin.Context) {
+	// 查询系统级交易所模板
+	query := `SELECT id, name, type, description, supports_testnet 
+	          FROM system_exchanges 
+	          ORDER BY id`
+	
+	rows, err := s.database.Query(query)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, "查询系统交易所失败: "+err.Error())
+		return
+	}
+	defer rows.Close()
+	
+	var exchanges []map[string]interface{}
+	for rows.Next() {
+		var id, name, typ, description string
+		var supportsTestnet bool
+		if err := rows.Scan(&id, &name, &typ, &description, &supportsTestnet); err != nil {
+			continue
+		}
+		
+		exchanges = append(exchanges, map[string]interface{}{
+			"id":               id,
+			"name":             name,
+			"type":             typ,
+			"description":      description,
+			"supports_testnet": supportsTestnet,
+		})
+	}
+	
+	SuccessResponse(c, exchanges)
 }

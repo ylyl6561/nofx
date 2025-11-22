@@ -109,7 +109,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           api.getSupportedModels(),
           api.getSupportedExchanges(),
         ])
-        setAllModels(modelConfigs.filter((m) => m.enabled))
+        setAllModels(modelConfigs)
         setAllExchanges(exchangeConfigs)
         setSupportedModels(supportedModels)
         setSupportedExchanges(supportedExchanges)
@@ -300,44 +300,18 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
   const handleDeleteModelConfig = async (modelId: string) => {
     try {
-      const updatedModels =
-        allModels?.map((m) =>
-          m.id === modelId
-            ? {
-                ...m,
-                apiKey: '',
-                customApiUrl: '',
-                customModelName: '',
-                enabled: false,
-              }
-            : m
-        ) || []
-
-      const request = {
-        models: Object.fromEntries(
-          updatedModels.map((model) => [
-            model.provider, // 使用 provider 而不是 id
-            {
-              enabled: model.enabled,
-              api_key: model.apiKey || '',
-              custom_api_url: model.customApiUrl || '',
-              custom_model_name: model.customModelName || '',
-            },
-          ])
-        ),
-      }
-
-      await api.updateModelConfigs(request)
+      // 调用删除 API
+      await api.deleteModel(modelId)
       
-      // 重新获取模型配置以确保数据同步，并过滤掉禁用的模型
+      // 重新获取模型配置以确保数据同步
       const refreshedModels = await api.getModelConfigs()
-      setAllModels(refreshedModels.filter(m => m.enabled))
+      setAllModels(refreshedModels)
       
       setShowModelModal(false)
       setEditingModel(null)
     } catch (error) {
       console.error('Failed to delete model config:', error)
-      alert(t('deleteConfigFailed', language))
+      alert(error instanceof Error ? error.message : t('deleteConfigFailed', language))
     }
   }
 
@@ -402,9 +376,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
       await api.updateModelConfigs(request)
 
-      // 重新获取用户配置以确保数据同步，并过滤掉禁用的模型
+      // 重新获取用户配置以确保数据同步
       const refreshedModels = await api.getModelConfigs()
-      setAllModels(refreshedModels.filter(m => m.enabled))
+      setAllModels(refreshedModels)
 
       setShowModelModal(false)
       setEditingModel(null)
@@ -415,8 +389,6 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   }
 
   const handleDeleteExchangeConfig = async (exchangeId: string, apiKeyName: string) => {
-    if (!confirm(t('confirmDeleteExchange', language))) return
-
     try {
       // 使用新的单个删除 API
       const exchangeKey = `${exchangeId}_${apiKeyName}`
@@ -1325,9 +1297,9 @@ function ModelConfigModal({
           {editingModelId && (
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 if (confirm(t('confirmDeleteModel', language))) {
-                  onDelete(editingModelId)
+                  await onDelete(editingModelId)
                 }
               }}
               className="p-2 rounded hover:bg-red-100 transition-colors"
@@ -1704,8 +1676,10 @@ function ExchangeConfigModal({
             {editingExchange && userExchange && (
               <button
                 type="button"
-                onClick={() => {
-                  onDelete(editingExchange.id, userExchange.apiKeyName || '')
+                onClick={async () => {
+                  if (confirm(t('confirmDeleteExchange', language))) {
+                    await onDelete(editingExchange.id, userExchange.apiKeyName || '')
+                  }
                 }}
                 className="p-2 rounded hover:bg-red-100 transition-colors"
                 style={{

@@ -100,12 +100,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const data = await response.json()
 
       if (response.ok) {
+        // 情况1: 需要OTP验证
         if (data.requires_otp) {
           return {
             success: true,
             userID: data.user_id,
             requiresOTP: true,
             message: data.message,
+          }
+        }
+        
+        // 情况2: 直接返回token（本地环境跳过OTP）
+        if (data.token) {
+          const userData = {
+            id: data.user_id,
+            email: data.email,
+          }
+          localStorage.setItem('auth_token', data.token)
+          localStorage.setItem('auth_user', JSON.stringify(userData))
+          setToken(data.token)
+          setUser(userData)
+          return {
+            success: true,
+            message: data.message || '登录成功',
           }
         }
       } else {

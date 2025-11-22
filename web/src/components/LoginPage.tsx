@@ -49,8 +49,13 @@ export function LoginPage() {
 
     if (result.success) {
       if (result.requiresOTP && result.userID) {
+        // 需要OTP验证
         setUserID(result.userID)
         setStep('otp')
+      } else {
+        // 直接登录成功（本地环境跳过OTP）
+        // 跳转到主页
+        window.location.href = '/traders'
       }
     } else {
       setError(result.message || t('loginFailed', language))

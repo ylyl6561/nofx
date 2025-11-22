@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	configpkg "nofx/config"
 	"nofx/decision"
 	"nofx/logger"
 	"nofx/market"
@@ -205,9 +206,20 @@ func NewAutoTrader(config AutoTraderConfig, database interface{}, userID string)
 		return nil, fmt.Errorf("初始金额必须大于0，请在配置中设置InitialBalance")
 	}
 
-	// 初始化决策日志记录器（使用trader ID创建独立目录）
-	logDir := fmt.Sprintf("decision_logs/%s", config.ID)
-	decisionLogger := logger.NewDecisionLogger(logDir)
+	// 初始化决策日志记录器
+	// 优先使用数据库版本，如果数据库不可用则回退到文件系统
+	var decisionLogger logger.IDecisionLogger
+	dbInstance, ok := database.(*configpkg.Database)
+	if ok && dbInstance != nil {
+		// 使用数据库决策日志记录器
+		decisionLogger = logger.NewDBDecisionLogger(dbInstance, userID, config.ID)
+		log.Printf("📝 [%s] 使用数据库决策日志记录器", config.Name)
+	} else {
+		// 回退到文件系统日志记录器
+		logDir := fmt.Sprintf("decision_logs/%s", config.ID)
+		decisionLogger = logger.NewDecisionLogger(logDir)
+		log.Printf("📝 [%s] 使用文件系统决策日志记录器: %s", config.Name, logDir)
+	}
 
 	// 设置默认系统提示词模板
 	systemPromptTemplate := config.SystemPromptTemplate
@@ -393,6 +405,12 @@ func (at *AutoTrader) autoSyncBalanceIfNeeded() {
 
 // runCycle 运行一个交易周期（使用AI全权决策）
 func (at *AutoTrader) runCycle() error {
+	// 0. 检查trader是否已停止
+	if !at.isRunning {
+		log.Printf("⏹ [%s] Trader已停止，跳过本次决策周期", at.name)
+		return nil
+	}
+	
 	at.callCount++
 
 	log.Print("\n" + strings.Repeat("=", 70) + "\n")
@@ -576,6 +594,11 @@ func (at *AutoTrader) runCycle() error {
 	// 9. 保存决策记录
 	if err := at.decisionLogger.LogDecision(record); err != nil {
 		log.Printf("⚠ 保存决策记录失败: %v", err)
+	}
+	
+	// 10. 记录权益历史（每个决策周期记录一次）
+	if err := at.recordEquitySnapshot(); err != nil {
+		log.Printf("⚠️ 记录权益历史失败: %v", err)
 	}
 
 	return nil
@@ -1753,4 +1776,49 @@ func (at *AutoTrader) ClearPeakPnLCache(symbol, side string) {
 
 	posKey := symbol + "_" + side
 	delete(at.peakPnLCache, posKey)
+}
+
+// recordEquitySnapshot 记录权益历史快照
+func (at *AutoTrader) recordEquitySnapshot() error {
+	// 只有数据库可用时才记录
+	db, ok := at.database.(*configpkg.Database)
+	if !ok || db == nil {
+		return nil // 数据库不可用，静默跳过
+	}
+	
+	// 获取账户信息
+	account, err := at.GetAccountInfo()
+	if err != nil {
+		return fmt.Errorf("获取账户信息失败: %w", err)
+	}
+	
+	// 提取字段
+	totalEquity, _ := account["total_equity"].(float64)
+	availableBalance, _ := account["available_balance"].(float64)
+	totalUnrealizedProfit, _ := account["total_unrealized_profit"].(float64)
+	totalPnL, _ := account["total_pnl"].(float64)
+	totalPnLPct, _ := account["total_pnl_pct"].(float64)
+	positionCount, _ := account["position_count"].(int)
+	marginUsedPct, _ := account["margin_used_pct"].(float64)
+	
+	// 创建权益历史记录
+	record := &configpkg.EquityHistoryRecord{
+		UserID:                at.userID,
+		TraderID:              at.id,
+		Timestamp:             time.Now(),
+		TotalEquity:           totalEquity,
+		AvailableBalance:      availableBalance,
+		TotalUnrealizedProfit: totalUnrealizedProfit,
+		TotalPnL:              totalPnL,
+		TotalPnLPct:           totalPnLPct,
+		PositionCount:         positionCount,
+		MarginUsedPct:         marginUsedPct,
+	}
+	
+	// 保存到数据库
+	if err := db.SaveEquityHistory(record); err != nil {
+		return fmt.Errorf("保存权益历史失败: %w", err)
+	}
+	
+	return nil
 }

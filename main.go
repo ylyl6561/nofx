@@ -6,6 +6,7 @@ import (
 	"log"
 	"nofx/api"
 	"nofx/auth"
+	"nofx/cleaner"
 	"nofx/config"
 	"nofx/manager"
 	"nofx/market"
@@ -27,7 +28,6 @@ type LeverageConfig struct {
 
 // ConfigFile 配置文件结构，只包含需要同步到数据库的字段
 type ConfigFile struct {
-	AdminMode          bool              `json:"admin_mode"`
 	BetaMode           bool              `json:"beta_mode"`
 	APIServerPort      int               `json:"api_server_port"`
 	UseDefaultCoins    bool              `json:"use_default_coins"`
@@ -76,7 +76,6 @@ func syncConfigToDatabase(database *config.Database, configFile *ConfigFile) err
 
 	// 同步各配置项到数据库
 	configs := map[string]string{
-		"admin_mode":           fmt.Sprintf("%t", configFile.AdminMode),
 		"beta_mode":            fmt.Sprintf("%t", configFile.BetaMode),
 		"use_default_coins":    fmt.Sprintf("%t", configFile.UseDefaultCoins),
 		"coin_pool_api_url":    configFile.CoinPoolAPIURL,
@@ -161,22 +160,54 @@ func loadBetaCodesToDatabase(database *config.Database) error {
 }
 
 func main() {
+	// 检测运行环境
+	env := os.Getenv("APP_ENV")
+	if env == "" {
+		env = "production" // 默认为生产环境
+	}
+	
 	// Load environment variables from .env file if it exists.
 	// This is for local development convenience. In production, env vars should be set directly.
 	if err := godotenv.Load(); err != nil {
 		log.Println("📄 No .env file found, using environment variables from OS")
 	}
 
+	// 显示环境信息
 	fmt.Println("╔════════════════════════════════════════════════════════════╗")
 	fmt.Println("║    🤖 AI多模型交易系统 - 支持 DeepSeek & Qwen            ║")
 	fmt.Println("╚════════════════════════════════════════════════════════════╝")
-	fmt.Println()
-
-	// 初始化数据库配置
-	dbPath := "config.db"
-	if len(os.Args) > 1 {
-		dbPath = os.Args[1]
+	
+	// 显示当前环境
+	envIcon := "🌐"
+	envColor := ""
+	if env == "local" || env == "development" {
+		envIcon = "💻"
+		envColor = "本地开发"
+	} else if env == "production" {
+		envIcon = "🚀"
+		envColor = "生产环境"
 	}
+	fmt.Printf("%s 运行环境: %s (%s)\n", envIcon, envColor, env)
+	
+	// 显示数据库连接信息（隐藏密码）
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL != "" {
+		// 隐藏密码部分
+		if strings.Contains(dbURL, "@") {
+			parts := strings.Split(dbURL, "@")
+			if len(parts) == 2 {
+				userPart := strings.Split(parts[0], "://")
+				if len(userPart) == 2 {
+					userInfo := strings.Split(userPart[1], ":")
+					if len(userInfo) == 2 {
+						maskedURL := userPart[0] + "://" + userInfo[0] + ":***@" + parts[1]
+						fmt.Printf("🗄️  数据库: %s\n", maskedURL)
+					}
+				}
+			}
+		}
+	}
+	fmt.Println()
 
 	// 读取配置文件
 	configFile, err := loadConfigFile()
@@ -184,37 +215,26 @@ func main() {
 		log.Fatalf("❌ 读取config.json失败: %v", err)
 	}
 
-	log.Printf("📋 初始化配置数据库: %s", dbPath)
-	database, err := config.NewDatabase(dbPath)
+	// 初始化PostgreSQL数据库连接
+	log.Printf("📋 连接PostgreSQL数据库...")
+	database, err := config.NewDatabase("")
 	if err != nil {
-		log.Fatalf("❌ 初始化数据库失败: %v", err)
+		log.Fatalf("❌ 数据库连接失败: %v", err)
 	}
 	defer database.Close()
 
-	// 只有使用 SQLite 时才同步 config.json 到数据库
-	// PostgreSQL 数据库是共享的，配置已经存在
-	if !database.IsPostgreSQL() {
-		// 同步config.json到数据库
-		if err := syncConfigToDatabase(database, configFile); err != nil {
-			log.Printf("⚠️  同步config.json到数据库失败: %v", err)
-		}
-
-		// 加载内测码到数据库
-		if err := loadBetaCodesToDatabase(database); err != nil {
-			log.Printf("⚠️  加载内测码到数据库失败: %v", err)
-		}
-	} else {
-		log.Printf("🐘 使用 PostgreSQL，跳过 config.json 同步（配置已存在于共享数据库）")
+	// PostgreSQL 数据库是共享的，跳过 config.json 同步（配置已存在于共享数据库）
+	log.Printf("🐘 使用 PostgreSQL，配置已存在于共享数据库")
+	
+	// 加载内测码到数据库（如果有新的内测码文件）
+	if err := loadBetaCodesToDatabase(database); err != nil {
+		log.Printf("⚠️  加载内测码到数据库失败: %v", err)
 	}
 
 	// 获取系统配置
 	useDefaultCoinsStr, _ := database.GetSystemConfig("use_default_coins")
 	useDefaultCoins := useDefaultCoinsStr == "true"
 	apiPortStr, _ := database.GetSystemConfig("api_server_port")
-
-	// 获取管理员模式配置
-	adminModeStr, _ := database.GetSystemConfig("admin_mode")
-	adminMode := adminModeStr != "false" // 默认为true
 
 	// 设置JWT密钥
 	jwtSecret, _ := database.GetSystemConfig("jwt_secret")
@@ -223,20 +243,10 @@ func main() {
 		log.Printf("⚠️  使用默认JWT密钥，建议在生产环境中配置")
 	}
 	auth.SetJWTSecret(jwtSecret)
-
-	// 管理员模式下需要管理员密码，缺失则退出
-	if adminMode {
-		adminPassword := os.Getenv("NOFX_ADMIN_PASSWORD")
-		if adminPassword == "" {
-			log.Fatalf("Admin mode is enabled but NOFX_ADMIN_PASSWORD is missing. Set NOFX_ADMIN_PASSWORD and restart.")
-		}
-		if err := auth.SetAdminPasswordFromPlain(adminPassword); err != nil {
-			log.Fatalf("Failed to set admin password: %v", err)
-		}
-		auth.SetAdminMode(true)
-		log.Printf("✓ Admin mode enabled. All API endpoints require admin authentication.")
-	}
-
+	
+	// 关闭Admin模式，使用普通用户认证
+	auth.SetAdminMode(false)
+	log.Printf("✓ 用户认证模式已启用，每个用户只能访问自己的数据")
 
 	log.Printf("✓ 配置数据库初始化成功")
 	fmt.Println()
@@ -360,6 +370,10 @@ func main() {
 			log.Printf("❌ API服务器错误: %v", err)
 		}
 	}()
+	
+	// 启动数据清理任务
+	dataCleaner := cleaner.NewDataCleaner(database)
+	dataCleaner.Start()
 
 	// 启动流行情数据 - 默认使用所有交易员设置的币种 如果没有设置币种 则优先使用系统默认
 	// 检查是否使用测试网（从第一个启用的交易所配置读取）
@@ -377,7 +391,12 @@ func main() {
 	<-sigChan
 	fmt.Println()
 	fmt.Println()
-	log.Println("📛 收到退出信号，正在停止所有trader...")
+	log.Println("📛 收到退出信号，正在停止所有服务...")
+	
+	// 停止数据清理任务
+	dataCleaner.Stop()
+	
+	// 停止所有交易员
 	traderManager.StopAll()
 
 	fmt.Println()

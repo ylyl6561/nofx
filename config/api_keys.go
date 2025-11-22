@@ -199,7 +199,7 @@ func (d *Database) GetAPIKeys(userID string) ([]APIKey, error) {
 
 // RevokeAPIKey 撤销API Key
 func (d *Database) RevokeAPIKey(keyID, userID string) error {
-	query := `UPDATE api_keys SET enabled = 0 WHERE id = ? AND user_id = ?`
+	query := `UPDATE api_keys SET enabled = false WHERE id = ? AND user_id = ?`
 	result, err := d.db.Exec(d.convertQuery(query), keyID, userID)
 	if err != nil {
 		return err
@@ -234,20 +234,20 @@ func (d *Database) DeleteAPIKey(keyID, userID string) error {
 func (d *Database) GetAPIUsageStats(userID string, days int) (map[string]interface{}, error) {
 	// 获取总调用次数
 	var totalCalls int
-	err := d.db.QueryRow(`
+	err := d.db.QueryRow(d.convertQuery(`
 		SELECT COUNT(*) FROM api_usage_logs 
-		WHERE user_id = ? AND created_at >= datetime('now', '-' || ? || ' days')
-	`, userID, days).Scan(&totalCalls)
+		WHERE user_id = ? AND created_at >= NOW() - INTERVAL '1 day' * ?
+	`), userID, days).Scan(&totalCalls)
 	if err != nil {
 		return nil, err
 	}
 
 	// 获取平均响应时间
 	var avgResponseTime sql.NullFloat64
-	err = d.db.QueryRow(`
+	err = d.db.QueryRow(d.convertQuery(`
 		SELECT AVG(response_time_ms) FROM api_usage_logs 
-		WHERE user_id = ? AND created_at >= datetime('now', '-' || ? || ' days')
-	`, userID, days).Scan(&avgResponseTime)
+		WHERE user_id = ? AND created_at >= NOW() - INTERVAL '1 day' * ?
+	`), userID, days).Scan(&avgResponseTime)
 	if err != nil {
 		return nil, err
 	}

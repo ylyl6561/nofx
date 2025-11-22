@@ -13,37 +13,16 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
 	_ "github.com/lib/pq"
 )
 
-// Database 配置数据库
+// Database 配置数据库（仅支持PostgreSQL）
 type Database struct {
 	db *sql.DB
 }
 
-// IsPostgreSQL 检查是否使用 PostgreSQL（公开方法）
-func (d *Database) IsPostgreSQL() bool {
-	// 检查 DATABASE_URL 或 DB_TYPE 环境变量
-	if os.Getenv("DATABASE_URL") != "" {
-		return true
-	}
-	dbType := os.Getenv("DB_TYPE")
-	return dbType == "postgres" || dbType == "postgresql"
-}
-
-// isPostgreSQL 内部使用的便捷方法
-func (d *Database) isPostgreSQL() bool {
-	return d.IsPostgreSQL()
-}
-
-// convertQuery 将 SQLite 查询转换为 PostgreSQL 兼容的查询
+// convertQuery 将 ? 占位符转换为 PostgreSQL 的 $1, $2, $3... 格式
 func (d *Database) convertQuery(query string) string {
-	if !d.isPostgreSQL() {
-		return query
-	}
-	
-	// 将 ? 占位符转换为 $1, $2, $3...
 	result := ""
 	paramCount := 1
 	for _, char := range query {
@@ -54,54 +33,29 @@ func (d *Database) convertQuery(query string) string {
 			result += string(char)
 		}
 	}
-	
-	// 将 SQLite 的布尔值转换为 PostgreSQL 的布尔值
-	result = strings.ReplaceAll(result, "COALESCE(use_coin_pool, 0)", "COALESCE(use_coin_pool, false)")
-	result = strings.ReplaceAll(result, "COALESCE(use_oi_top, 0)", "COALESCE(use_oi_top, false)")
-	result = strings.ReplaceAll(result, "COALESCE(override_base_prompt, 0)", "COALESCE(override_base_prompt, false)")
-	result = strings.ReplaceAll(result, "COALESCE(is_cross_margin, 1)", "COALESCE(is_cross_margin, true)")
-	result = strings.ReplaceAll(result, "COALESCE(otp_verified, 0)", "COALESCE(otp_verified, false)")
-	result = strings.ReplaceAll(result, "COALESCE(enabled, 0)", "COALESCE(enabled, false)")
-	result = strings.ReplaceAll(result, "COALESCE(testnet, 0)", "COALESCE(testnet, false)")
-	result = strings.ReplaceAll(result, "COALESCE(is_running, 0)", "COALESCE(is_running, false)")
-
-	// 将 SQLite 的时间函数转换为 PostgreSQL 的时间函数
-	result = strings.ReplaceAll(result, "datetime('now')", "CURRENT_TIMESTAMP")
-	
-	// 将 SQLite 的布尔比较转换为 PostgreSQL 的布尔比较
-	result = strings.ReplaceAll(result, "enabled = 1", "enabled = true")
-	result = strings.ReplaceAll(result, "enabled = 0", "enabled = false")
-	result = strings.ReplaceAll(result, "testnet = 1", "testnet = true")
-	result = strings.ReplaceAll(result, "testnet = 0", "testnet = false")
-	result = strings.ReplaceAll(result, "is_running = 1", "is_running = true")
-	result = strings.ReplaceAll(result, "is_running = 0", "is_running = false")
-	result = strings.ReplaceAll(result, "otp_verified = 1", "otp_verified = true")
-	result = strings.ReplaceAll(result, "otp_verified = 0", "otp_verified = false")
-	result = strings.ReplaceAll(result, "used = 1", "used = true")
-	result = strings.ReplaceAll(result, "used = 0", "used = false")
-	
-	// 将 SQLite 的布尔赋值转换为 PostgreSQL 的布尔赋值
-	result = strings.ReplaceAll(result, "SET used = 1", "SET used = true")
-	result = strings.ReplaceAll(result, "SET used = 0", "SET used = false")
-	result = strings.ReplaceAll(result, "SET enabled = 1", "SET enabled = true")
-	result = strings.ReplaceAll(result, "SET enabled = 0", "SET enabled = false")
-	
 	return result
 }
 
-// NewDatabase 创建配置数据库
+// isPostgreSQL 检查是否使用PostgreSQL（现在始终返回true）
+func (d *Database) isPostgreSQL() bool {
+	return true
+}
+
+// IsPostgreSQL 检查是否使用PostgreSQL（公开方法，现在始终返回true）
+func (d *Database) IsPostgreSQL() bool {
+	return true
+}
+
+// NewDatabase 创建PostgreSQL数据库连接
 func NewDatabase(dbPath string) (*Database, error) {
 	var db *sql.DB
 	var err error
-	var dbType string
 	
-	// 检查是否有 PostgreSQL 环境变量
+	// 优先使用 DATABASE_URL
 	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
-		// 使用 DATABASE_URL（优先级最高）
 		db, err = sql.Open("postgres", dbURL)
-		dbType = "PostgreSQL"
-		log.Printf("🐘 使用 PostgreSQL 数据库 (DATABASE_URL): %s", maskURL(dbURL))
-	} else if os.Getenv("DB_TYPE") == "postgres" || os.Getenv("DB_TYPE") == "postgresql" {
+		log.Printf("🐘 连接 PostgreSQL (DATABASE_URL): %s", maskURL(dbURL))
+	} else {
 		// 使用独立的环境变量构建连接字符串
 		host := os.Getenv("DB_HOST")
 		port := os.Getenv("DB_PORT")
@@ -126,18 +80,12 @@ func NewDatabase(dbPath string) (*Database, error) {
 			host, port, user, password, dbname, sslmode)
 		
 		db, err = sql.Open("postgres", connStr)
-		dbType = "PostgreSQL"
-		log.Printf("🐘 使用 PostgreSQL 数据库: host=%s port=%s dbname=%s user=%s sslmode=%s",
+		log.Printf("🐘 连接 PostgreSQL: host=%s port=%s dbname=%s user=%s sslmode=%s",
 			host, port, dbname, user, sslmode)
-	} else {
-		// 开发环境：使用 SQLite
-		db, err = sql.Open("sqlite", dbPath)
-		dbType = "SQLite"
-		log.Printf("📁 使用 SQLite 数据库: %s", dbPath)
 	}
 	
 	if err != nil {
-		return nil, fmt.Errorf("打开%s数据库失败: %w", dbType, err)
+		return nil, fmt.Errorf("连接PostgreSQL失败: %w", err)
 	}
 
 	database := &Database{db: db}
@@ -152,6 +100,10 @@ func NewDatabase(dbPath string) (*Database, error) {
 	return database, nil
 }
 
+// Query 执行查询并返回结果集（用于API层查询）
+func (d *Database) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	return d.db.Query(query, args...)
+}
 
 // initDefaultData 初始化默认数据
 func (d *Database) initDefaultData() error {
@@ -164,23 +116,13 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, model := range systemAIModels {
-		if d.isPostgreSQL() {
-			_, err := d.db.Exec(`
-				INSERT INTO system_ai_models (id, name, provider, description, default_model_name, default_api_url) 
-				VALUES ($1, $2, $3, $4, $5, $6)
-				ON CONFLICT (id) DO NOTHING
-			`, model.id, model.name, model.provider, model.description, model.defaultModelName, model.defaultAPIURL)
-			if err != nil {
-				return fmt.Errorf("初始化系统 AI 模型模板失败: %w", err)
-			}
-		} else {
-			_, err := d.db.Exec(`
-				INSERT OR IGNORE INTO system_ai_models (id, name, provider, description, default_model_name, default_api_url) 
-				VALUES (?, ?, ?, ?, ?, ?)
-			`, model.id, model.name, model.provider, model.description, model.defaultModelName, model.defaultAPIURL)
-			if err != nil {
-				return fmt.Errorf("初始化系统 AI 模型模板失败: %w", err)
-			}
+		_, err := d.db.Exec(`
+			INSERT INTO system_ai_models (id, name, provider, description, default_model_name, default_api_url) 
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (id) DO NOTHING
+		`, model.id, model.name, model.provider, model.description, model.defaultModelName, model.defaultAPIURL)
+		if err != nil {
+			return fmt.Errorf("初始化系统 AI 模型模板失败: %w", err)
 		}
 	}
 
@@ -196,23 +138,13 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, exchange := range systemExchanges {
-		if d.isPostgreSQL() {
-			_, err := d.db.Exec(`
-				INSERT INTO system_exchanges (id, name, type, description, supports_testnet) 
-				VALUES ($1, $2, $3, $4, $5)
-				ON CONFLICT (id) DO NOTHING
-			`, exchange.id, exchange.name, exchange.typ, exchange.description, exchange.supportsTestnet)
-			if err != nil {
-				return fmt.Errorf("初始化系统交易所模板失败: %w", err)
-			}
-		} else {
-			_, err := d.db.Exec(`
-				INSERT OR IGNORE INTO system_exchanges (id, name, type, description, supports_testnet) 
-				VALUES (?, ?, ?, ?, ?)
-			`, exchange.id, exchange.name, exchange.typ, exchange.description, exchange.supportsTestnet)
-			if err != nil {
-				return fmt.Errorf("初始化系统交易所模板失败: %w", err)
-			}
+		_, err := d.db.Exec(`
+			INSERT INTO system_exchanges (id, name, type, description, supports_testnet) 
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (id) DO NOTHING
+		`, exchange.id, exchange.name, exchange.typ, exchange.description, exchange.supportsTestnet)
+		if err != nil {
+			return fmt.Errorf("初始化系统交易所模板失败: %w", err)
 		}
 	}
 
@@ -226,25 +158,13 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, model := range aiModels {
-		if d.isPostgreSQL() {
-			// PostgreSQL 使用 ON CONFLICT
-			_, err := d.db.Exec(`
-				INSERT INTO ai_models (id, user_id, name, provider, enabled) 
-				VALUES ($1, 'default', $2, $3, false)
-				ON CONFLICT (id, user_id) DO NOTHING
-			`, model.id, model.name, model.provider)
-			if err != nil {
-				return fmt.Errorf("初始化AI模型失败: %w", err)
-			}
-		} else {
-			// SQLite 使用 INSERT OR IGNORE
-			_, err := d.db.Exec(`
-				INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled) 
-				VALUES (?, 'default', ?, ?, 0)
-			`, model.id, model.name, model.provider)
-			if err != nil {
-				return fmt.Errorf("初始化AI模型失败: %w", err)
-			}
+		_, err := d.db.Exec(`
+			INSERT INTO ai_models (id, user_id, name, provider, enabled) 
+			VALUES ($1, 'default', $2, $3, false)
+			ON CONFLICT (id, user_id) DO NOTHING
+		`, model.id, model.name, model.provider)
+		if err != nil {
+			return fmt.Errorf("初始化AI模型失败: %w", err)
 		}
 	}
 
@@ -259,63 +179,40 @@ func (d *Database) initDefaultData() error {
 	}
 
 	for _, exchange := range exchanges {
-		if d.isPostgreSQL() {
-			// PostgreSQL 使用 ON CONFLICT，主键包含 api_key_name
-			_, err := d.db.Exec(`
-				INSERT INTO exchanges (id, user_id, api_key_name, name, type, enabled) 
-				VALUES ($1, 'default', '', $2, $3, false)
-				ON CONFLICT (id, user_id, api_key_name) DO NOTHING
-			`, exchange.id, exchange.name, exchange.typ)
-			if err != nil {
-				return fmt.Errorf("初始化交易所失败: %w", err)
-			}
-		} else {
-			// SQLite 使用 INSERT OR IGNORE，主键包含 api_key_name
-			_, err := d.db.Exec(`
-				INSERT OR IGNORE INTO exchanges (id, user_id, api_key_name, name, type, enabled) 
-				VALUES (?, 'default', '', ?, ?, 0)
-			`, exchange.id, exchange.name, exchange.typ)
-			if err != nil {
-				return fmt.Errorf("初始化交易所失败: %w", err)
-			}
+		_, err := d.db.Exec(`
+			INSERT INTO exchanges (id, user_id, api_key_name, name, type, enabled) 
+			VALUES ($1, 'default', '', $2, $3, false)
+			ON CONFLICT (id, user_id, api_key_name) DO NOTHING
+		`, exchange.id, exchange.name, exchange.typ)
+		if err != nil {
+			return fmt.Errorf("初始化交易所失败: %w", err)
 		}
 	}
 
 	// 初始化系统配置 - 创建所有字段，设置默认值，后续由config.json同步更新
 	systemConfigs := map[string]string{
-		"admin_mode":           "true",                                                                                // 默认开启管理员模式，便于首次使用
-		"beta_mode":            "false",                                                                               // 默认关闭内测模式
-		"api_server_port":      "8080",                                                                                // 默认API端口
-		"use_default_coins":    "true",                                                                                // 默认使用内置币种列表
-		"default_coins":        `["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","HYPEUSDT"]`, // 默认币种列表（JSON格式）
-		"max_daily_loss":       "10.0",                                                                                // 最大日损失百分比
-		"max_drawdown":         "20.0",                                                                                // 最大回撤百分比
-		"stop_trading_minutes": "60",                                                                                  // 停止交易时间（分钟）
-		"btc_eth_leverage":     "5",                                                                                   // BTC/ETH杠杆倍数
-		"altcoin_leverage":     "5",                                                                                   // 山寨币杠杆倍数
-		"jwt_secret":           "",                                                                                    // JWT密钥，默认为空，由config.json或系统生成
+		"beta_mode":                   "false",                                                                               // 默认关闭内测模式
+		"api_server_port":             "8080",                                                                                // 默认API端口
+		"use_default_coins":           "true",                                                                                // 默认使用内置币种列表
+		"default_coins":               `["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","HYPEUSDT"]`, // 默认币种列表（JSON格式）
+		"max_daily_loss":              "10.0",                                                                                // 最大日损失百分比
+		"max_drawdown":                "20.0",                                                                                // 最大回撤百分比
+		"stop_trading_minutes":        "60",                                                                                  // 停止交易时间（分钟）
+		"btc_eth_leverage":            "5",                                                                                   // BTC/ETH杠杆倍数
+		"altcoin_leverage":            "5",                                                                                   // 山寨币杠杆倍数
+		"jwt_secret":                  "",                                                                                    // JWT密钥，默认为空，由config.json或系统生成
+		"decision_logs_retention_days": "10",                                                                                 // 决策日志保留天数
+		"equity_history_retention_days": "90",                                                                                // 权益历史保留天数
 	}
 
 	for key, value := range systemConfigs {
-		if d.isPostgreSQL() {
-			// PostgreSQL 使用 ON CONFLICT
-			_, err := d.db.Exec(`
-				INSERT INTO system_config (key, value) 
-				VALUES ($1, $2)
-				ON CONFLICT (key) DO NOTHING
-			`, key, value)
-			if err != nil {
-				return fmt.Errorf("初始化系统配置失败 [%s]: %w", key, err)
-			}
-		} else {
-			// SQLite 使用 INSERT OR IGNORE
-			_, err := d.db.Exec(`
-				INSERT OR IGNORE INTO system_config (key, value) 
-				VALUES (?, ?)
-			`, key, value)
-			if err != nil {
-				return fmt.Errorf("初始化系统配置失败 [%s]: %w", key, err)
-			}
+		_, err := d.db.Exec(`
+			INSERT INTO system_config (key, value) 
+			VALUES ($1, $2)
+			ON CONFLICT (key) DO NOTHING
+		`, key, value)
+		if err != nil {
+			return fmt.Errorf("初始化系统配置失败 [%s]: %w", key, err)
 		}
 	}
 
@@ -650,7 +547,7 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 	if err == nil {
 		// 找到了现有配置（精确匹配 ID），更新它
 		query2 := `
-			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
+			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND user_id = ?`
 		_, err = d.db.Exec(d.convertQuery(query2), enabled, apiKey, customAPIURL, customModelName, existingID, userID)
 		return err
@@ -665,7 +562,7 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 		// 找到了现有配置（通过 provider 匹配，兼容旧版），更新它
 		log.Printf("⚠️  使用旧版 provider 匹配更新模型: %s -> %s", provider, existingID)
 		query4 := `
-			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = datetime('now')
+			UPDATE ai_models SET enabled = ?, api_key = ?, custom_api_url = ?, custom_model_name = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND user_id = ?`
 		_, err = d.db.Exec(d.convertQuery(query4), enabled, apiKey, customAPIURL, customModelName, existingID, userID)
 		return err
@@ -712,10 +609,36 @@ func (d *Database) UpdateAIModel(userID, id string, enabled bool, apiKey, custom
 	log.Printf("✓ 创建新的 AI 模型配置: ID=%s, Provider=%s, Name=%s", newModelID, provider, name)
 	query6 := `
 		INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url, custom_model_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
 	_, err = d.db.Exec(d.convertQuery(query6), newModelID, userID, name, provider, enabled, apiKey, customAPIURL, customModelName)
 
 	return err
+}
+
+// DeleteAIModel 删除AI模型配置
+func (d *Database) DeleteAIModel(userID, modelID string) error {
+	log.Printf("🗑️  DeleteAIModel: userID=%s, modelID=%s", userID, modelID)
+	
+	query := `DELETE FROM ai_models WHERE id = ? AND user_id = ?`
+	result, err := d.db.Exec(d.convertQuery(query), modelID, userID)
+	if err != nil {
+		log.Printf("❌ DeleteAIModel: 删除失败: %v", err)
+		return err
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("❌ DeleteAIModel: 获取影响行数失败: %v", err)
+		return err
+	}
+	
+	if rowsAffected == 0 {
+		log.Printf("⚠️  DeleteAIModel: 未找到要删除的AI模型")
+		return fmt.Errorf("AI模型不存在")
+	}
+	
+	log.Printf("✓ DeleteAIModel: 成功删除 %d 条记录", rowsAffected)
+	return nil
 }
 
 // GetExchanges 获取用户的交易所配置
@@ -818,7 +741,7 @@ func (d *Database) UpdateExchange(userID, id string, enabled bool, apiKeyName, a
 		insertQuery := `
 			INSERT INTO exchanges (id, user_id, name, type, enabled, api_key_name, api_key, secret_key, passphrase, testnet, 
 			                       hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		`
 		_, err = d.db.Exec(d.convertQuery(insertQuery), id, userID, name, typ, enabled, apiKeyName, apiKey, secretKey, passphrase, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
 
@@ -862,42 +785,22 @@ func (d *Database) DeleteExchange(userID, exchangeID, apiKeyName string) error {
 
 // CreateAIModel 创建AI模型配置
 func (d *Database) CreateAIModel(userID, id, name, provider string, enabled bool, apiKey, customAPIURL string) error {
-	if d.isPostgreSQL() {
-		// PostgreSQL 使用 ON CONFLICT
-		_, err := d.db.Exec(`
-			INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url) 
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (id, user_id) DO NOTHING
-		`, id, userID, name, provider, enabled, apiKey, customAPIURL)
-		return err
-	} else {
-		// SQLite 使用 INSERT OR IGNORE
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url) 
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, id, userID, name, provider, enabled, apiKey, customAPIURL)
-		return err
-	}
+	_, err := d.db.Exec(`
+		INSERT INTO ai_models (id, user_id, name, provider, enabled, api_key, custom_api_url) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (id, user_id) DO NOTHING
+	`, id, userID, name, provider, enabled, apiKey, customAPIURL)
+	return err
 }
 
 // CreateExchange 创建交易所配置
 func (d *Database) CreateExchange(userID, id, apiKeyName, name, typ string, enabled bool, apiKey, secretKey string, testnet bool, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey string) error {
-	if d.isPostgreSQL() {
-		// PostgreSQL 使用 ON CONFLICT，主键包含 api_key_name
-		_, err := d.db.Exec(`
-			INSERT INTO exchanges (id, user_id, api_key_name, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-			ON CONFLICT (id, user_id, api_key_name) DO NOTHING
-		`, id, userID, apiKeyName, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
-		return err
-	} else {
-		// SQLite 使用 INSERT OR IGNORE，主键包含 api_key_name
-		_, err := d.db.Exec(`
-			INSERT OR IGNORE INTO exchanges (id, user_id, api_key_name, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, id, userID, apiKeyName, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
-		return err
-	}
+	_, err := d.db.Exec(`
+		INSERT INTO exchanges (id, user_id, api_key_name, name, type, enabled, api_key, secret_key, testnet, hyperliquid_wallet_addr, aster_user, aster_signer, aster_private_key) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT (id, user_id, api_key_name) DO NOTHING
+	`, id, userID, apiKeyName, name, typ, enabled, apiKey, secretKey, testnet, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey)
+	return err
 }
 
 // CreateTrader 创建交易员
@@ -1065,54 +968,30 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 // GetSystemConfig 获取系统配置
 func (d *Database) GetSystemConfig(key string) (string, error) {
 	var value string
-	if d.isPostgreSQL() {
-		err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = $1`, key).Scan(&value)
-		return value, err
-	} else {
-		err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = ?`, key).Scan(&value)
-		return value, err
-	}
+	err := d.db.QueryRow(`SELECT value FROM system_config WHERE key = $1`, key).Scan(&value)
+	return value, err
 }
 
 // SetSystemConfig 设置系统配置
 func (d *Database) SetSystemConfig(key, value string) error {
-	if d.isPostgreSQL() {
-		// PostgreSQL 使用 ON CONFLICT DO UPDATE
-		_, err := d.db.Exec(`
-			INSERT INTO system_config (key, value) VALUES ($1, $2)
-			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-		`, key, value)
-		return err
-	} else {
-		// SQLite 使用 INSERT OR REPLACE
-		_, err := d.db.Exec(`
-			INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)
-		`, key, value)
-		return err
-	}
+	_, err := d.db.Exec(`
+		INSERT INTO system_config (key, value) VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+	`, key, value)
+	return err
 }
 
 // CreateUserSignalSource 创建用户信号源配置
 func (d *Database) CreateUserSignalSource(userID, coinPoolURL, oiTopURL string) error {
-	if d.isPostgreSQL() {
-		// PostgreSQL 使用 ON CONFLICT DO UPDATE
-		_, err := d.db.Exec(`
-			INSERT INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
-			VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-			ON CONFLICT (user_id) DO UPDATE SET 
-				coin_pool_url = EXCLUDED.coin_pool_url,
-				oi_top_url = EXCLUDED.oi_top_url,
-				updated_at = CURRENT_TIMESTAMP
-		`, userID, coinPoolURL, oiTopURL)
-		return err
-	} else {
-		// SQLite 使用 INSERT OR REPLACE
-		_, err := d.db.Exec(`
-			INSERT OR REPLACE INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
-			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-		`, userID, coinPoolURL, oiTopURL)
-		return err
-	}
+	_, err := d.db.Exec(`
+		INSERT INTO user_signal_sources (user_id, coin_pool_url, oi_top_url, updated_at)
+		VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+		ON CONFLICT (user_id) DO UPDATE SET 
+			coin_pool_url = EXCLUDED.coin_pool_url,
+			oi_top_url = EXCLUDED.oi_top_url,
+			updated_at = CURRENT_TIMESTAMP
+	`, userID, coinPoolURL, oiTopURL)
+	return err
 }
 
 // GetUserSignalSource 获取用户信号源配置
@@ -1174,12 +1053,16 @@ func (d *Database) IsUsingTestnet() bool {
 	var testnet bool
 	query := `
 		SELECT testnet FROM exchanges 
-		WHERE enabled = 1 
+		WHERE enabled = true 
 		LIMIT 1`
 	err := d.db.QueryRow(d.convertQuery(query)).Scan(&testnet)
 	
 	if err != nil {
-		log.Printf("⚠️  检查测试网配置失败: %v，默认使用实盘", err)
+		if err == sql.ErrNoRows {
+			log.Printf("ℹ️  暂无启用的交易所配置，默认使用实盘模式")
+		} else {
+			log.Printf("⚠️  检查测试网配置失败: %v，默认使用实盘", err)
+		}
 		return false
 	}
 	

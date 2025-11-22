@@ -50,7 +50,7 @@ func New() *Client {
 		Provider:  ProviderDeepSeek,
 		BaseURL:   "https://api.deepseek.com/v1",
 		Model:     "deepseek-chat",
-		Timeout:   120 * time.Second, // 增加到120秒，因为AI需要分析大量数据
+		Timeout:   180 * time.Second, // 增加到180秒（3分钟），应对网络延迟和AI分析时间
 		MaxTokens: maxTokens,
 	}
 }
@@ -154,7 +154,7 @@ func (client *Client) SetCustomAPI(apiURL, apiKey, modelName string) {
 	}
 
 	client.Model = modelName
-	client.Timeout = 120 * time.Second
+	client.Timeout = 180 * time.Second
 }
 
 // SetClient 设置完整的AI配置（高级用户）
@@ -281,18 +281,27 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 	}
 
 	// 发送请求
+	log.Printf("📡 [MCP] 开始发送AI请求 (超时: %v)...", client.Timeout)
+	startTime := time.Now()
+	
 	httpClient := &http.Client{Timeout: client.Timeout}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("发送请求失败: %w", err)
+		elapsed := time.Since(startTime)
+		return "", fmt.Errorf("发送请求失败 (耗时: %v): %w", elapsed, err)
 	}
 	defer resp.Body.Close()
+
+	log.Printf("✓ [MCP] 收到响应头 (耗时: %v, 状态: %d)", time.Since(startTime), resp.StatusCode)
 
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("读取响应失败: %w", err)
+		elapsed := time.Since(startTime)
+		return "", fmt.Errorf("读取响应失败 (耗时: %v): %w", elapsed, err)
 	}
+	
+	log.Printf("✓ [MCP] 完成响应读取 (总耗时: %v, 大小: %d bytes)", time.Since(startTime), len(body))
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("API返回错误 (status %d): %s", resp.StatusCode, string(body))
