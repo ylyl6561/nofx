@@ -735,6 +735,36 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		performance = nil
 	}
 
+	// 5.5. 获取市场数据（用于构建详细的Input Prompt）
+	log.Printf("🔍 开始获取市场数据，候选币种数量: %d", len(candidateCoins))
+	marketDataMap := make(map[string]*market.Data)
+	successCount := 0
+	
+	// 首先获取 BTC 数据（重要的市场指标）
+	if btcData, err := market.Get("BTCUSDT"); err == nil {
+		marketDataMap["BTCUSDT"] = btcData
+		successCount++
+	} else {
+		log.Printf("⚠️  获取 BTCUSDT 市场数据失败: %v", err)
+	}
+	
+	// 获取所有候选币种的市场数据
+	for _, coin := range candidateCoins {
+		// 跳过已经获取的 BTC
+		if coin.Symbol == "BTCUSDT" {
+			continue
+		}
+		
+		if data, err := market.Get(coin.Symbol); err == nil {
+			marketDataMap[coin.Symbol] = data
+			successCount++
+		} else {
+			log.Printf("⚠️  获取 %s 市场数据失败: %v", coin.Symbol, err)
+		}
+	}
+	
+	log.Printf("✅ 成功获取 %d/%d 个币种的市场数据", successCount, len(candidateCoins)+1)
+
 	// 6. 构建上下文
 	ctx := &decision.Context{
 		CurrentTime:     time.Now().Format("2006-01-02 15:04:05"),
@@ -754,7 +784,8 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		},
 		Positions:      positionInfos,
 		CandidateCoins: candidateCoins,
-		Performance:    performance, // 添加历史表现分析
+		MarketDataMap:  marketDataMap, // ✅ 添加市场数据映射
+		Performance:    performance,   // 添加历史表现分析
 	}
 
 	return ctx, nil

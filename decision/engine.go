@@ -441,16 +441,71 @@ func buildUserPrompt(ctx *Context) string {
 	}
 	sb.WriteString("\n")
 
-	// 夏普比率（直接传值，不要复杂格式化）
+	// AI学习与反思（历史表现分析）
 	if ctx.Performance != nil {
-		// 直接从interface{}中提取SharpeRatio
-		type PerformanceData struct {
-			SharpeRatio float64 `json:"sharpe_ratio"`
+		// 提取完整的历史表现数据
+		type SymbolStat struct {
+			TotalTrades int     `json:"total_trades"`
+			WinRate     float64 `json:"win_rate"`
+			TotalPnL    float64 `json:"total_pn_l"`
 		}
+		type PerformanceData struct {
+			TotalTrades   int                       `json:"total_trades"`
+			WinningTrades int                       `json:"winning_trades"`
+			LosingTrades  int                       `json:"losing_trades"`
+			WinRate       float64                   `json:"win_rate"`
+			ProfitFactor  float64                   `json:"profit_factor"`
+			SharpeRatio   float64                   `json:"sharpe_ratio"`
+			AvgWin        float64                   `json:"avg_win"`
+			AvgLoss       float64                   `json:"avg_loss"`
+			BestSymbol    string                    `json:"best_symbol"`
+			WorstSymbol   string                    `json:"worst_symbol"`
+			SymbolStats   map[string]SymbolStat     `json:"symbol_stats"`
+		}
+		
 		var perfData PerformanceData
 		if jsonData, err := json.Marshal(ctx.Performance); err == nil {
 			if err := json.Unmarshal(jsonData, &perfData); err == nil {
-				sb.WriteString(fmt.Sprintf("## 📊 夏普比率: %.2f\n\n", perfData.SharpeRatio))
+				sb.WriteString("## 📊 AI学习与反思（最近100个周期）\n\n")
+				
+				// 基础统计
+				if perfData.TotalTrades > 0 {
+					sb.WriteString(fmt.Sprintf("总交易: %d笔 | 盈利: %d笔 | 亏损: %d笔 | 胜率: %.1f%%\n",
+						perfData.TotalTrades, perfData.WinningTrades, perfData.LosingTrades, perfData.WinRate))
+					sb.WriteString(fmt.Sprintf("盈亏比: %.2f | 夏普比率: %.2f\n",
+						perfData.ProfitFactor, perfData.SharpeRatio))
+					sb.WriteString(fmt.Sprintf("平均盈利: +%.2f USDT | 平均亏损: %.2f USDT\n\n",
+						perfData.AvgWin, perfData.AvgLoss))
+					
+					// 币种表现（只显示有交易的币种）
+					if len(perfData.SymbolStats) > 0 {
+						sb.WriteString("各币种表现:\n")
+						// 按总盈亏排序（简单遍历，最多显示前5个）
+						count := 0
+						for symbol, stats := range perfData.SymbolStats {
+							if count >= 5 {
+								break
+							}
+							pnlSign := "+"
+							if stats.TotalPnL < 0 {
+								pnlSign = ""
+							}
+							sb.WriteString(fmt.Sprintf("  %s: %d笔 | 胜率%.0f%% | 总盈亏%s%.2f USDT\n",
+								symbol, stats.TotalTrades, stats.WinRate, pnlSign, stats.TotalPnL))
+							count++
+						}
+						sb.WriteString("\n")
+					}
+					
+					// 最佳/最差币种提示
+					if perfData.BestSymbol != "" && perfData.WorstSymbol != "" {
+						sb.WriteString(fmt.Sprintf("💡 表现最好: %s | 表现最差: %s\n\n",
+							perfData.BestSymbol, perfData.WorstSymbol))
+					}
+				} else {
+					// 没有历史交易数据
+					sb.WriteString("暂无历史交易数据\n\n")
+				}
 			}
 		}
 	}
