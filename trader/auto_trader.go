@@ -497,6 +497,10 @@ func (at *AutoTrader) runCycle() error {
 		record.SystemPrompt = decision.SystemPrompt // 保存系统提示词
 		record.InputPrompt = decision.UserPrompt
 		record.CoTTrace = decision.CoTTrace
+		// 保存 token 使用信息
+		record.PromptTokens = decision.PromptTokens
+		record.CompletionTokens = decision.CompletionTokens
+		record.TotalTokens = decision.TotalTokens
 		if len(decision.Decisions) > 0 {
 			decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
 			record.DecisionJSON = string(decisionJSON)
@@ -726,6 +730,10 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		marginUsedPct = (totalMarginUsed / totalEquity) * 100
 	}
 
+	// ⚠️ 预留手续费缓冲：可用余额扣除 0.5% 作为手续费预留
+	// 这样 AI 在计算仓位时就不会用满全部余额，避免保证金不足错误
+	availableBalanceForAI := availableBalance * 0.995
+
 	// 5. 分析历史表现（最近100个周期，避免长期持仓的交易记录丢失）
 	// 假设每3分钟一个周期，100个周期 = 5小时，足够覆盖大部分交易
 	performance, err := at.decisionLogger.AnalyzePerformance(100)
@@ -759,11 +767,11 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 			marketDataMap[coin.Symbol] = data
 			successCount++
 		} else {
-			log.Printf("⚠️  获取 %s 市场数据失败: %v", coin.Symbol, err)
+			log.Printf(" 获取 %s 市场数据失败: %v", coin.Symbol, err)
 		}
 	}
 	
-	log.Printf("✅ 成功获取 %d/%d 个币种的市场数据", successCount, len(candidateCoins)+1)
+	log.Printf(" 成功获取 %d/%d 个币种的市场数据", successCount, len(candidateCoins)+1)
 
 	// 6. 构建上下文
 	ctx := &decision.Context{
@@ -774,7 +782,7 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		AltcoinLeverage: at.config.AltcoinLeverage, // 使用配置的杠杆倍数
 		Account: decision.AccountInfo{
 			TotalEquity:      totalEquity,
-			AvailableBalance: availableBalance,
+			AvailableBalance: availableBalanceForAI, // 使用扣除手续费缓冲后的余额
 			UnrealizedPnL:    totalUnrealizedProfit,
 			TotalPnL:         totalPnL,
 			TotalPnLPct:      totalPnLPct,

@@ -859,6 +859,22 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                 </div>
 
                 <div className="flex items-center gap-3 md:gap-4 flex-wrap md:flex-nowrap">
+                  {/* Token Usage */}
+                  <div className="text-center">
+                    <div className="text-xs mb-1" style={{ color: '#848E9C' }}>
+                      {language === 'zh' ? 'Token 使用' : 'Token Usage'}
+                    </div>
+                    <div
+                      className="px-2 md:px-3 py-1 rounded text-xs font-bold"
+                      style={{
+                        background: 'rgba(102, 126, 234, 0.1)',
+                        color: '#667eea',
+                      }}
+                    >
+                      {(trader.total_tokens || 0).toLocaleString()}
+                    </div>
+                  </div>
+
                   {/* Status */}
                   <div className="text-center">
                     <div className="text-xs mb-1" style={{ color: '#848E9C' }}>

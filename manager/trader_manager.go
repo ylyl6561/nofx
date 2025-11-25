@@ -181,6 +181,18 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 			log.Printf("❌ 添加交易员 %s 失败: %v", traderCfg.Name, err)
 			continue
 		}
+		
+		// 🔄 服务器重启后自动恢复运行：如果数据库中 is_running = true，则自动启动
+		if traderCfg.IsRunning {
+			if t, exists := tm.traders[traderCfg.ID]; exists {
+				log.Printf("🔄 [自动恢复] 交易员 %s 在数据库中标记为运行中，正在自动启动...", traderCfg.Name)
+				go func(autoTrader *trader.AutoTrader, name string) {
+					if err := autoTrader.Run(); err != nil {
+						log.Printf("❌ [自动恢复] 交易员 %s 启动失败: %v", name, err)
+					}
+				}(t, traderCfg.Name)
+			}
+		}
 	}
 
 	log.Printf("✓ 成功加载 %d 个交易员到内存", len(tm.traders))

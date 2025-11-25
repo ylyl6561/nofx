@@ -118,6 +118,10 @@ type FullDecision struct {
 	Timestamp    time.Time  `json:"timestamp"`
 	// AIRequestDurationMs 记录 AI API 调用耗时（毫秒）方便排查延迟问题
 	AIRequestDurationMs int64 `json:"ai_request_duration_ms,omitempty"`
+	// Token 使用信息
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 // GetFullDecision 获取AI的完整交易决策（批量分析所有币种和持仓）
@@ -136,23 +140,27 @@ func GetFullDecisionWithCustomPrompt(ctx *Context, aiClient mcp.AIClient, custom
 	systemPrompt := buildSystemPromptWithCustom(ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage, customPrompt, overrideBase, templateName)
 	userPrompt := buildUserPrompt(ctx)
 
-	// 3. 调用AI API（使用 system + user prompt）
+	// 3. 调用AI API（使用 system + user prompt，获取 token 信息）
 	aiCallStart := time.Now()
-	aiResponse, err := aiClient.CallWithMessages(systemPrompt, userPrompt)
+	aiResponse, err := aiClient.CallWithMessagesAndTokens(systemPrompt, userPrompt)
 	aiCallDuration := time.Since(aiCallStart)
 	if err != nil {
 		return nil, fmt.Errorf("调用AI API失败: %w", err)
 	}
 
 	// 4. 解析AI响应
-	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage)
+	decision, err := parseFullDecisionResponse(aiResponse.Content, ctx.Account.TotalEquity, ctx.BTCETHLeverage, ctx.AltcoinLeverage)
 
-	// 无论是否有错误，都要保存 SystemPrompt 和 UserPrompt（用于调试和决策未执行后的问题定位）
+	// 无论是否有错误，都要保存 SystemPrompt、UserPrompt 和 Token 信息
 	if decision != nil {
 		decision.Timestamp = time.Now()
-		decision.SystemPrompt = systemPrompt // 保存系统prompt
-		decision.UserPrompt = userPrompt     // 保存输入prompt
+		decision.SystemPrompt = systemPrompt
+		decision.UserPrompt = userPrompt
 		decision.AIRequestDurationMs = aiCallDuration.Milliseconds()
+		// 保存 token 使用信息
+		decision.PromptTokens = aiResponse.PromptTokens
+		decision.CompletionTokens = aiResponse.CompletionTokens
+		decision.TotalTokens = aiResponse.TotalTokens
 	}
 
 	if err != nil {
@@ -160,8 +168,8 @@ func GetFullDecisionWithCustomPrompt(ctx *Context, aiClient mcp.AIClient, custom
 	}
 
 	decision.Timestamp = time.Now()
-	decision.SystemPrompt = systemPrompt // 保存系统prompt
-	decision.UserPrompt = userPrompt     // 保存输入prompt
+	decision.SystemPrompt = systemPrompt
+	decision.UserPrompt = userPrompt
 	return decision, nil
 }
 
@@ -201,23 +209,20 @@ func fetchMarketDataForContext(ctx *Context) error {
 			continue
 		}
 
-		// ⚠️ 流动性过滤：持仓价值低于阈值的币种不做（多空都不做）
-		// 持仓价值 = 持仓量 × 当前价格
-		// 但现有持仓必须保留（需要决策是否平仓）
-		// 💡 OI 門檻配置：用戶可根據風險偏好調整
-		const minOIThresholdMillions = 15.0 // 可調整：15M(保守) / 10M(平衡) / 8M(寬鬆) / 5M(激進)
-
-		isExistingPosition := positionSymbols[symbol]
-		if !isExistingPosition && data.OpenInterest != nil && data.CurrentPrice > 0 {
-			// 计算持仓价值（USD）= 持仓量 × 当前价格
-			oiValue := data.OpenInterest.Latest * data.CurrentPrice
-			oiValueInMillions := oiValue / 1_000_000 // 转换为百万美元单位
-			if oiValueInMillions < minOIThresholdMillions {
-				log.Printf("⚠️  %s 持仓价值过低(%.2fM USD < %.1fM)，跳过此币种 [持仓量:%.0f × 价格:%.4f]",
-					symbol, oiValueInMillions, minOIThresholdMillions, data.OpenInterest.Latest, data.CurrentPrice)
-				continue
-			}
-		}
+		// ✅ 已移除流动性过滤：允许所有币种进入候选池，不管持仓价值有多少
+		// 注意：现有持仓始终保留（需要决策是否平仓）
+		// 如果需要重新启用过滤，可以取消注释下面的代码并设置阈值
+		
+		// const minOIThresholdMillions = 15.0 // 可調整：15M(保守) / 10M(平衡) / 8M(寬鬆) / 5M(激進)
+		// isExistingPosition := positionSymbols[symbol]
+		// if !isExistingPosition && data.OpenInterest != nil && data.CurrentPrice > 0 {
+		// 	oiValue := data.OpenInterest.Latest * data.CurrentPrice
+		// 	oiValueInMillions := oiValue / 1_000_000
+		// 	if oiValueInMillions < minOIThresholdMillions {
+		// 		log.Printf("⚠️  %s 持仓价值过低(%.2fM USD < %.1fM)，跳过此币种", symbol, oiValueInMillions, minOIThresholdMillions)
+		// 		continue
+		// 	}
+		// }
 
 		ctx.MarketDataMap[symbol] = data
 	}
@@ -635,6 +640,10 @@ func extractDecisions(response string) ([]Decision, error) {
 	jsonContent = compactArrayOpen(jsonContent)
 	jsonContent = fixMissingQuotes(jsonContent) // 二次修复（防止 regex 提取后还有残留全角）
 
+	// 📋 输出提取的原始 JSON（用于调试）
+	log.Printf("📋 [AI决策] 提取的原始 JSON:")
+	log.Printf("%s", jsonContent)
+
 	// 🔧 验证 JSON 格式（检测常见错误）
 	if err := validateJSONFormat(jsonContent); err != nil {
 		return nil, fmt.Errorf("JSON格式验证失败: %w\nJSON内容: %s\n完整响应:\n%s", err, jsonContent, response)
@@ -646,7 +655,39 @@ func extractDecisions(response string) ([]Decision, error) {
 		return nil, fmt.Errorf("JSON解析失败: %w\nJSON内容: %s", err, jsonContent)
 	}
 
+	// 📋 输出解析后的决策详情（用于调试）
+	log.Printf("📋 [AI决策] 解析成功，共 %d 个决策:", len(decisions))
+	for i, d := range decisions {
+		log.Printf("  决策 #%d:", i+1)
+		log.Printf("    - Action: %s", d.Action)
+		log.Printf("    - Symbol: %s", d.Symbol)
+		log.Printf("    - Reasoning: %s", truncateString(d.Reasoning, 10000))
+		
+		// 根据不同动作输出相关字段
+		switch d.Action {
+		case "open_long", "open_short":
+			log.Printf("    - PositionSizeUSD: %.2f", d.PositionSizeUSD)
+			log.Printf("    - Leverage: %d", d.Leverage)
+			log.Printf("    - StopLoss: %.2f", d.StopLoss)
+			log.Printf("    - TakeProfit: %.2f", d.TakeProfit)
+		case "update_stop_loss":
+			log.Printf("    - NewStopLoss: %.2f ⚠️", d.NewStopLoss)
+		case "update_take_profit":
+			log.Printf("    - NewTakeProfit: %.2f", d.NewTakeProfit)
+		case "partial_close":
+			log.Printf("    - ClosePercentage: %.1f%%", d.ClosePercentage)
+		}
+	}
+
 	return decisions, nil
+}
+
+// truncateString 截断字符串用于日志输出
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // fixMissingQuotes 替换中文引号和全角字符为英文引号和半角字符（避免AI输出全角JSON字符导致解析失败）

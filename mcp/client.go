@@ -314,6 +314,11 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -324,7 +329,108 @@ func (client *Client) callOnce(systemPrompt, userPrompt string) (string, error) 
 		return "", fmt.Errorf("API返回空响应")
 	}
 
+	// 记录 token 使用情况
+	if result.Usage.TotalTokens > 0 {
+		log.Printf("📊 [Token] Prompt: %d | Completion: %d | Total: %d", 
+			result.Usage.PromptTokens, result.Usage.CompletionTokens, result.Usage.TotalTokens)
+	}
+
 	return result.Choices[0].Message.Content, nil
+}
+
+// CallWithMessagesAndTokens 使用 system + user prompt 调用AI API（返回内容和 token 信息）
+func (client *Client) CallWithMessagesAndTokens(systemPrompt, userPrompt string) (*AIResponse, error) {
+	// 复用现有的调用逻辑
+	messages := []map[string]string{
+		{"role": "system", "content": systemPrompt},
+		{"role": "user", "content": userPrompt},
+	}
+
+	requestBody := map[string]interface{}{
+		"model":       client.Model,
+		"messages":    messages,
+		"temperature": 0.5,
+		"max_tokens":  client.MaxTokens,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	var url string
+	if client.UseFullURL {
+		url = client.BaseURL
+	} else {
+		url = fmt.Sprintf("%s/chat/completions", client.BaseURL)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	switch client.Provider {
+	case ProviderDeepSeek:
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", client.APIKey))
+	case ProviderQwen:
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", client.APIKey))
+	default:
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", client.APIKey))
+	}
+
+	startTime := time.Now()
+	httpClient := &http.Client{Timeout: client.Timeout}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("发送请求失败 (耗时: %v): %w", time.Since(startTime), err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败 (耗时: %v): %w", time.Since(startTime), err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API返回错误 (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if len(result.Choices) == 0 {
+		return nil, fmt.Errorf("API返回空响应")
+	}
+
+	// 记录 token 使用情况
+	if result.Usage.TotalTokens > 0 {
+		log.Printf("📊 [Token] Prompt: %d | Completion: %d | Total: %d", 
+			result.Usage.PromptTokens, result.Usage.CompletionTokens, result.Usage.TotalTokens)
+	}
+
+	return &AIResponse{
+		Content:          result.Choices[0].Message.Content,
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		TotalTokens:      result.Usage.TotalTokens,
+	}, nil
 }
 
 // isRetryableError 判断错误是否可重试

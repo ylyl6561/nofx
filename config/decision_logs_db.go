@@ -26,6 +26,9 @@ type DecisionLogRecord struct {
 	Success             bool      `json:"success"`
 	ErrorMessage        string    `json:"error_message"`
 	AIRequestDurationMs int64     `json:"ai_request_duration_ms"`
+	PromptTokens        int       `json:"prompt_tokens"`
+	CompletionTokens    int       `json:"completion_tokens"`
+	TotalTokens         int       `json:"total_tokens"`
 	CreatedAt           time.Time `json:"created_at"`
 }
 
@@ -44,11 +47,13 @@ func (d *Database) SaveDecisionLog(log *DecisionLogRecord) error {
 		_, err := d.db.Exec(`
 			INSERT INTO decision_logs 
 			(id, user_id, trader_id, cycle_number, timestamp, system_prompt, input_prompt, cot_trace,
-			 account_state, positions, decisions, candidate_coins, execution_log, success, error_message, ai_request_duration_ms)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			 account_state, positions, decisions, candidate_coins, execution_log, success, error_message, ai_request_duration_ms,
+			 prompt_tokens, completion_tokens, total_tokens)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		`, log.ID, log.UserID, log.TraderID, log.CycleNumber, log.Timestamp, log.SystemPrompt,
 			log.InputPrompt, log.CoTTrace, log.AccountState, log.Positions, log.Decisions, 
-			log.CandidateCoins, log.ExecutionLog, log.Success, log.ErrorMessage, log.AIRequestDurationMs)
+			log.CandidateCoins, log.ExecutionLog, log.Success, log.ErrorMessage, log.AIRequestDurationMs,
+			log.PromptTokens, log.CompletionTokens, log.TotalTokens)
 		
 		if err != nil {
 			return fmt.Errorf("保存决策日志失败: %w", err)
@@ -57,11 +62,12 @@ func (d *Database) SaveDecisionLog(log *DecisionLogRecord) error {
 		_, err := d.db.Exec(`
 			INSERT INTO decision_logs 
 			(id, user_id, trader_id, cycle_number, timestamp, account_state, positions, 
-			 decisions, candidate_coins, execution_log, success, error_message, ai_request_duration_ms)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 decisions, candidate_coins, execution_log, success, error_message, ai_request_duration_ms,
+			 prompt_tokens, completion_tokens, total_tokens)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, log.ID, log.UserID, log.TraderID, log.CycleNumber, log.Timestamp, log.AccountState,
 			log.Positions, log.Decisions, log.CandidateCoins, log.ExecutionLog, log.Success,
-			log.ErrorMessage, log.AIRequestDurationMs)
+			log.ErrorMessage, log.AIRequestDurationMs, log.PromptTokens, log.CompletionTokens, log.TotalTokens)
 		
 		if err != nil {
 			return fmt.Errorf("保存决策日志失败: %w", err)

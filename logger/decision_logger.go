@@ -27,6 +27,10 @@ type DecisionRecord struct {
 	ErrorMessage   string             `json:"error_message"`   // 错误信息（如果有）
 	// AIRequestDurationMs 记录 AI API 调用耗时（毫秒），方便评估调用性能
 	AIRequestDurationMs int64 `json:"ai_request_duration_ms,omitempty"`
+	// Token 使用信息
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 // AccountSnapshot 账户状态快照

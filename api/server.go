@@ -205,6 +205,10 @@ func (s *Server) setupRoutes() {
 			protected.PUT("/user/trading-config", userConfigHandlers.SaveUserTradingConfig)
 			protected.DELETE("/user/trading-config", userConfigHandlers.DeleteUserTradingConfig)
 			
+			// Token 使用量统计
+			protected.GET("/users/token-usage", s.handleGetUserTokenUsage)
+			protected.GET("/traders/:id/token-usage", s.handleGetTraderTokenUsage)
+			
 			// 决策日志
 			protected.GET("/traders/:id/decision-logs", userConfigHandlers.GetDecisionLogs)
 			protected.GET("/traders/:id/decision-logs/statistics", userConfigHandlers.GetDecisionLogStatistics)
@@ -811,10 +815,17 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 	})
 }
 
-// handleDeleteTrader 删除交易员
+// handleDeleteTrader 删除交易员（软删除）
 func (s *Server) handleDeleteTrader(c *gin.Context) {
 	userID := c.GetString("user_id")
 	traderID := c.Param("id")
+
+	// 验证权限
+	_, _, _, err := s.database.GetTraderConfig(userID, traderID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在"})
+		return
+	}
 
 	// 如果交易员正在运行，先停止它
 	if trader, err := s.traderManager.GetTrader(traderID); err == nil {
@@ -829,14 +840,14 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 	s.traderManager.RemoveTrader(traderID)
 	log.Printf("🗑️  已从内存中移除交易员: %s", traderID)
 
-	// 从数据库删除
-	err := s.database.DeleteTrader(userID, traderID)
+	// 软删除：设置 is_deleted = 'y'
+	err = s.database.SoftDeleteTrader(userID, traderID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除交易员失败: %v", err)})
 		return
 	}
 
-	log.Printf("✓ 交易员已删除: %s", traderID)
+	log.Printf("✓ 交易员已软删除: %s", traderID)
 	c.JSON(http.StatusOK, gin.H{"message": "交易员已删除"})
 }
 
@@ -1349,6 +1360,44 @@ func (s *Server) handleDeleteExchange(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "交易所配置已删除"})
 }
 
+// handleGetUserTokenUsage 获取用户总 token 使用量
+func (s *Server) handleGetUserTokenUsage(c *gin.Context) {
+	userID := c.GetString("user_id")
+	log.Printf("📊 [Token API] 收到用户 token 使用量请求: user_id=%s", userID)
+	
+	totalTokens, err := s.database.GetUserTotalTokens(userID)
+	if err != nil {
+		log.Printf("❌ [Token API] 查询用户 token 失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+	
+	log.Printf("✓ [Token API] 返回用户 token: user_id=%s, total_tokens=%d", userID, totalTokens)
+	c.JSON(http.StatusOK, gin.H{
+		"total_tokens": totalTokens,
+		"user_id":      userID,
+	})
+}
+
+// handleGetTraderTokenUsage 获取单个 trader 的 token 使用量
+func (s *Server) handleGetTraderTokenUsage(c *gin.Context) {
+	userID := c.GetString("user_id")
+	traderID := c.Param("id")
+	
+	// 验证权限
+	trader, _, _, err := s.database.GetTraderConfig(userID, traderID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "交易员不存在"})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"total_tokens": trader.TotalTokens,
+		"trader_id":    traderID,
+		"trader_name":  trader.Name,
+	})
+}
+
 // handleGetUserSignalSource 获取用户信号源配置
 func (s *Server) handleGetUserSignalSource(c *gin.Context) {
 	userID := c.GetString("user_id")
@@ -1421,6 +1470,7 @@ func (s *Server) handleTraderList(c *gin.Context) {
 			"exchange_api_key_name":  trader.ExchangeAPIKeyName,
 			"is_running":             isRunning,
 			"initial_balance":        trader.InitialBalance,
+			"total_tokens":           trader.TotalTokens, // 添加 token 统计
 		})
 	}
 
@@ -1602,12 +1652,7 @@ func (s *Server) handleLatestDecisions(c *gin.Context) {
 		return
 	}
 
-	// 反转数组，让最新的在前面（用于列表显示）
-	// GetLatestRecords返回的是从旧到新（用于图表），这里需要从新到旧
-	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
-		records[i], records[j] = records[j], records[i]
-	}
-
+	// GetLatestRecords 已经按时间倒序返回（最新的在前），直接返回即可
 	c.JSON(http.StatusOK, records)
 }
 

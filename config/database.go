@@ -378,6 +378,8 @@ type TraderRecord struct {
 	OverrideBasePrompt   bool      `json:"override_base_prompt"`   // 是否覆盖基础prompt
 	SystemPromptTemplate string    `json:"system_prompt_template"` // 系统提示词模板名称
 	IsCrossMargin        bool      `json:"is_cross_margin"`        // 是否为全仓模式（true=全仓，false=逐仓）
+	TotalTokens          int64     `json:"total_tokens"`           // 累计使用的 token 数量
+	IsDeleted            string    `json:"is_deleted"`             // 软删除标记 ('n'=未删除, 'y'=已删除)
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
@@ -812,7 +814,7 @@ func (d *Database) CreateTrader(trader *TraderRecord) error {
 	return err
 }
 
-// GetTraders 获取用户的交易员
+// GetTraders 获取用户的交易员（过滤已删除）
 func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 	query := `
 		SELECT id, user_id, name, ai_model_id, exchange_id, COALESCE(exchange_api_key_name, '') as exchange_api_key_name,
@@ -822,8 +824,10 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 		       COALESCE(use_coin_pool, false) as use_coin_pool, COALESCE(use_oi_top, false) as use_oi_top,
 		       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, false) as override_base_prompt,
 		       COALESCE(system_prompt_template, 'default') as system_prompt_template,
-		       COALESCE(is_cross_margin, true) as is_cross_margin, created_at, updated_at
-		FROM traders WHERE user_id = ? ORDER BY created_at DESC`
+		       COALESCE(is_cross_margin, true) as is_cross_margin,
+		       COALESCE(total_tokens, 0) as total_tokens, COALESCE(is_deleted, 'n') as is_deleted,
+		       created_at, updated_at
+		FROM traders WHERE user_id = ? AND COALESCE(is_deleted, 'n') = 'n' ORDER BY created_at DESC`
 	
 	rows, err := d.db.Query(d.convertQuery(query), userID)
 	if err != nil {
@@ -841,6 +845,7 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 			&trader.UseCoinPool, &trader.UseOITop,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.SystemPromptTemplate,
 			&trader.IsCrossMargin,
+			&trader.TotalTokens, &trader.IsDeleted,
 			&trader.CreatedAt, &trader.UpdatedAt,
 		)
 		if err != nil {
@@ -855,6 +860,35 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 // UpdateTraderStatus 更新交易员状态
 func (d *Database) UpdateTraderStatus(userID, id string, isRunning bool) error {
 	_, err := d.db.Exec(d.convertQuery(`UPDATE traders SET is_running = ? WHERE id = ? AND user_id = ?`), isRunning, id, userID)
+	return err
+}
+
+// UpdateTraderTokens 累加 trader 的 token 使用量
+func (d *Database) UpdateTraderTokens(traderID string, tokens int) error {
+	query := d.convertQuery("UPDATE traders SET total_tokens = total_tokens + ? WHERE id = ?")
+	_, err := d.db.Exec(query, tokens, traderID)
+	return err
+}
+
+// UpdateUserTokens 累加 user 的 token 使用量
+func (d *Database) UpdateUserTokens(userID string, tokens int) error {
+	query := d.convertQuery("UPDATE users SET total_tokens = total_tokens + ? WHERE id = ?")
+	_, err := d.db.Exec(query, tokens, userID)
+	return err
+}
+
+// GetUserTotalTokens 获取用户的总 token 使用量
+func (d *Database) GetUserTotalTokens(userID string) (int64, error) {
+	var totalTokens int64
+	query := d.convertQuery("SELECT COALESCE(total_tokens, 0) FROM users WHERE id = ?")
+	err := d.db.QueryRow(query, userID).Scan(&totalTokens)
+	return totalTokens, err
+}
+
+// SoftDeleteTrader 软删除交易员（设置 is_deleted = 'y'）
+func (d *Database) SoftDeleteTrader(userID, traderID string) error {
+	query := d.convertQuery("UPDATE traders SET is_deleted = 'y', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?")
+	_, err := d.db.Exec(query, traderID, userID)
 	return err
 }
 
@@ -911,6 +945,8 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 			COALESCE(t.override_base_prompt, false) as override_base_prompt,
 			COALESCE(t.system_prompt_template, 'default') as system_prompt_template,
 			COALESCE(t.is_cross_margin, true) as is_cross_margin,
+			COALESCE(t.total_tokens, 0) as total_tokens,
+			COALESCE(t.is_deleted, 'n') as is_deleted,
 			t.created_at, t.updated_at,
 			a.id, a.user_id, a.name, a.provider, a.enabled, a.api_key,
 			COALESCE(a.custom_api_url, '') as custom_api_url,
@@ -932,7 +968,7 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 				-- 或者 trader 的 api_key_name 为空时，匹配任意启用的交易所
 				OR (COALESCE(t.exchange_api_key_name, '') = '' AND e.enabled = true)
 			)
-		WHERE t.id = ? AND t.user_id = ?
+		WHERE t.id = ? AND t.user_id = ? AND COALESCE(t.is_deleted, 'n') = 'n'
 		ORDER BY 
 			-- 优先选择启用的交易所
 			CASE WHEN e.enabled = true THEN 0 ELSE 1 END,
@@ -947,6 +983,7 @@ func (d *Database) GetTraderConfig(userID, traderID string) (*TraderRecord, *AIM
 		&trader.UseCoinPool, &trader.UseOITop,
 		&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.SystemPromptTemplate,
 		&trader.IsCrossMargin,
+		&trader.TotalTokens, &trader.IsDeleted,
 		&trader.CreatedAt, &trader.UpdatedAt,
 		&aiModel.ID, &aiModel.UserID, &aiModel.Name, &aiModel.Provider, &aiModel.Enabled, &aiModel.APIKey,
 		&aiModel.CustomAPIURL, &aiModel.CustomModelName,

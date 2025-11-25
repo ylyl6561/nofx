@@ -98,6 +98,8 @@ func (d *Database) createTables() error {
 				use_default_coins BOOLEAN DEFAULT true,
 				custom_coins TEXT DEFAULT '',
 				system_prompt_template TEXT DEFAULT 'default',
+				total_tokens BIGINT DEFAULT 0,
+				is_deleted TEXT DEFAULT 'n',
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			)`,
@@ -110,6 +112,7 @@ func (d *Database) createTables() error {
 				otp_secret TEXT,
 				otp_verified BOOLEAN DEFAULT false,
 				is_admin BOOLEAN DEFAULT false,
+				total_tokens BIGINT DEFAULT 0,
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			)`,

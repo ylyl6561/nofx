@@ -75,6 +75,9 @@ func (l *DBDecisionLogger) LogDecision(record *DecisionRecord) error {
 		Success:             record.Success,
 		ErrorMessage:        record.ErrorMessage,
 		AIRequestDurationMs: record.AIRequestDurationMs,
+		PromptTokens:        record.PromptTokens,
+		CompletionTokens:    record.CompletionTokens,
+		TotalTokens:         record.TotalTokens,
 	}
 	
 	// 保存到数据库
@@ -82,11 +85,28 @@ func (l *DBDecisionLogger) LogDecision(record *DecisionRecord) error {
 		return fmt.Errorf("保存决策日志到数据库失败: %w", err)
 	}
 	
+	// 累加 token 到 trader 表和 user 表
+	if record.TotalTokens > 0 {
+		// 更新 trader 的 token
+		if err := l.database.UpdateTraderTokens(l.traderID, record.TotalTokens); err != nil {
+			fmt.Printf("⚠️  更新 trader token 统计失败: %v\n", err)
+		} else {
+			fmt.Printf("📊 [Token] 累加 %d tokens 到 trader %s\n", record.TotalTokens, l.traderID)
+		}
+		
+		// 更新 user 的 token
+		if err := l.database.UpdateUserTokens(l.userID, record.TotalTokens); err != nil {
+			fmt.Printf("⚠️  更新 user token 统计失败: %v\n", err)
+		} else {
+			fmt.Printf("📊 [Token] 累加 %d tokens 到 user %s\n", record.TotalTokens, l.userID)
+		}
+	}
+	
 	fmt.Printf("📝 决策记录已保存到数据库: trader=%s cycle=%d\n", l.traderID, record.CycleNumber)
 	return nil
 }
 
-// GetLatestRecords 获取最近N条记录（按时间正序：从旧到新）
+// GetLatestRecords 获取最近N条记录（按时间倒序：最新的在前）
 func (l *DBDecisionLogger) GetLatestRecords(n int) ([]*DecisionRecord, error) {
 	dbRecords, err := l.database.GetLatestDecisionLogs(l.userID, l.traderID, n)
 	if err != nil {
@@ -104,11 +124,7 @@ func (l *DBDecisionLogger) GetLatestRecords(n int) ([]*DecisionRecord, error) {
 		records = append(records, record)
 	}
 	
-	// 反转数组，让时间从旧到新排列
-	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
-		records[i], records[j] = records[j], records[i]
-	}
-	
+	// 数据库已经按 timestamp DESC 排序，最新的在前，直接返回
 	return records, nil
 }
 
@@ -592,6 +608,9 @@ func (l *DBDecisionLogger) convertFromDBRecord(dbRecord *config.DecisionLogRecor
 		Success:             dbRecord.Success,
 		ErrorMessage:        dbRecord.ErrorMessage,
 		AIRequestDurationMs: dbRecord.AIRequestDurationMs,
+		PromptTokens:        dbRecord.PromptTokens,
+		CompletionTokens:    dbRecord.CompletionTokens,
+		TotalTokens:         dbRecord.TotalTokens,
 		SystemPrompt:        dbRecord.SystemPrompt,
 		InputPrompt:         dbRecord.InputPrompt,
 		CoTTrace:            dbRecord.CoTTrace,
