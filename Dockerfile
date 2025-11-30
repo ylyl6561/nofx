@@ -5,6 +5,7 @@ WORKDIR /src/web
 RUN npm install && npm run build
 
 FROM golang:1.25.0-alpine AS backend-builder
+RUN apk add --no-cache git
 WORKDIR /src
 COPY . /src
 COPY --from=frontend-builder /src/web/dist /src/web/dist
